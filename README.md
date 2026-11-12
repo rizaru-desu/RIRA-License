@@ -1,23 +1,23 @@
 # RiraLicense
 
-Server lisensi & API untuk produk RiraLab — dibangun dengan Go + chi router.
+License server & API for RiraLab products — built with Go + chi router.
 
-## ✨ Fitur
+## ✨ Features
 
-- REST API dengan [chi](https://github.com/go-chi/chi) v5
+- REST API with [chi](https://github.com/go-chi/chi) v5
 - Clean architecture: `handler` → `service` → (repo)
 - Health check endpoints (`/healthz`, `/readyz`)
 - Graceful shutdown (SIGINT / SIGTERM)
-- Middleware standar: RequestID, RealIP, Logger, Recoverer, CleanPath, Timeout
+- Standard middleware: RequestID, RealIP, Logger, Recoverer, CleanPath, Timeout
 
-## 📁 Struktur Project
+## 📁 Project Structure
 
 ```
 RiraLicense/
-├── server/                  # Backend Go
+├── server/                  # Go backend
 │   ├── cmd/api/             # Entry point
 │   ├── internal/
-│   │   ├── config/          # Konfigurasi (port, env)
+│   │   ├── config/          # Configuration (port, env)
 │   │   ├── handler/         # HTTP layer
 │   │   ├── service/         # Business logic layer
 │   │   └── router/          # Chi router + middleware
@@ -38,24 +38,24 @@ cd server
 go run ./cmd/api
 ```
 
-Server berjalan di **http://localhost:7819**.
+The server starts at **http://localhost:7819**.
 
 #### Environment Variables
 
-| Variable   | Default       | Deskripsi            |
-| ---------- | ------------- | -------------------- |
-| `APP_PORT` | `7819`        | Port HTTP server     |
+| Variable   | Default       | Description                  |
+| ---------- | ------------- | ---------------------------- |
+| `APP_PORT` | `7819`        | HTTP server port             |
 | `APP_ENV`  | `development` | `development` / `production` |
 
 #### Endpoints
 
-| Method | Endpoint   | Deskripsi                    |
-| ------ | ---------- | ---------------------------- |
-| `GET`  | `/`        | Liveness check               |
-| `GET`  | `/healthz` | Liveness check               |
-| `GET`  | `/readyz`  | Readiness + info runtime     |
+| Method | Endpoint   | Description                 |
+| ------ | ---------- | --------------------------- |
+| `GET`  | `/`        | Liveness check              |
+| `GET`  | `/healthz` | Liveness check              |
+| `GET`  | `/readyz`  | Readiness + runtime info    |
 
-Contoh response `/readyz`:
+Example `/readyz` response:
 
 ```json
 {
@@ -75,44 +75,49 @@ bun install
 bun run dev
 ```
 
-## ⚖️ Lisensi & Kepemilikan
+## ⚖️ License & Ownership
 
 > Copyright © 2026 [RiraLab — Rizaru Desu](https://github.com/rizarudev)
 
-Project ini dilisensikan di bawah **GNU Affero General Public License v3.0 (AGPL-3.0)** —
-lihat [LICENSE](LICENSE) untuk teks lengkap.
+This project is licensed under the **GNU Affero General Public License v3.0
+(AGPL-3.0)** — see [LICENSE](LICENSE) for the full text.
 
-### Ketentuan Penting
+### Important Terms
 
-1. **Kepemilikan** — Seluruh kode sumber adalah milik dan hak cipta RiraLab — Rizaru Desu.
-   Tidak ada pihak lain yang boleh mengklaim kepemilikan, keaslian, atau kepengarangan
-   atas kode ini.
+1. **Ownership** — All source code is the property of and copyrighted by
+   RiraLab — Rizaru Desu. No other party may claim ownership, originality,
+   or authorship of this code.
 
-2. **Fork & modifikasi** — Siapa pun bebas fork, memodifikasi, dan menggunakan project ini
-   SELAMA:
-   - Copyright notice dan lisensi AGPL-3.0 **dipertahankan utuh** di semua file;
-   - Versi hasil modifikasi juga dirilis di bawah AGPL-3.0 (copyleft);
-   - Source code dari versi yang dijalankan sebagai server/network service **wajib
-     dipublikasikan** kepada penggunanya (Pasal 13 AGPL).
+2. **Forks & modifications** — Anyone is free to fork, modify, and use this
+   project AS LONG AS they:
+   - Keep the copyright notices and AGPL-3.0 license **intact** in all files;
+   - Release their modified version under AGPL-3.0 as well (copyleft);
+   - **Publish the source code** of any modified version running as a
+     server/network service to its users (AGPL Section 13).
 
-3. **Rebranding / penggantian nama** — Nama **"RiraLicense"**, logo, identitas brand,
-   dan nama **"RiraLab"** merupakan merek milik RiraLab dan **TIDAK dilisensikan** di
-   bawah AGPL-3.0 (sesuai Pasal 7e). Versi fork/hasil modifikasi **wajib menggunakan
-   nama sendiri** dan **dilarang**:
-   - menggunakan nama/brand RiraLicense atau RiraLab;
-   - menghapus, menutupi, atau mengganti copyright notice asli;
-   - mengklaim atau mengesankan bahwa hasil fork adalah karya asli atau produk
-     resmi RiraLab.
+3. **Rebranding / renaming** — The name **"RiraLicense"**, its logo, brand
+   identity, and the name **"RiraLab"** are trademarks of RiraLab and are
+   **NOT licensed** under the AGPL-3.0 (per Section 7e). Forked/modified
+   versions **must use their own name** and are **prohibited** from:
+   - Using the "RiraLicense" or "RiraLab" name/brand;
+   - Removing, obscuring, or replacing the original copyright notices;
+   - Claiming or implying that a fork is an original work or an official
+     RiraLab product.
 
-4. **Pelanggaran** — Menghapus atribusi copyright, menulis ulang lisensi atas nama
-   pihak lain, atau me-rebrand lalu mengklaim kepemilikan **melanggar hukum hak cipta**
-   dan lisensi AGPL-3.0. Hak cipta tetap melekat pada RiraLab — Rizaru Desu terlepas
-   dari bagaimana kodenya disalin, diubah, atau diedarkan.
+4. **Violations** — Removing copyright attribution, rewriting the license in
+   someone else's name, or rebranding and claiming ownership **violates
+   copyright law** and the AGPL-3.0. Copyright remains with RiraLab —
+   Rizaru Desu regardless of how the code is copied, altered, or distributed.
 
-> 💡 **Catatan:** Copyright melindungi *kode*, trademark melindungi *nama & brand*.
-> Kombinasi keduanya (AGPL + klausul trademark di atas) adalah mekanisme yang
-> melindungi project ini dari kasus rebranding/pemilikan kembali oleh pihak lain.
+> 💡 **Note:** Copyright protects the *code*, trademarks protect the *name &
+> brand*. The combination of both (AGPL + the trademark clause above) is what
+> protects this project from rebranding/ownership cases by third parties.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+before participating.
 
 ---
 
-Dibuat dengan ❤️ oleh **RiraLab — Rizaru Desu**
+Made with ❤️ by **RiraLab — Rizaru Desu**
