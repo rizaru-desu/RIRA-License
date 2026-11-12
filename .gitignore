@@ -1,0 +1,27 @@
+# Go
+server/api
+server/bin/
+*.exe
+*.out
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node / Vite (saas)
+node_modules/
+dist/
+.vite/
+
+# Bun
+bun.lockb
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Logs
+*.log
