@@ -59,7 +59,7 @@ jobs:
       url: https://license.rira.web.id
     steps:
       - name: Connect to Tailscale tailnet
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_CLIENT_SECRET }}
@@ -67,7 +67,7 @@ jobs:
 
       - name: Check server reachability
         run: |
-          tailscale status
+          tailscale status || true
           tailscale ping --timeout 10s "${{ secrets.SERVER_HOST }}" || true
 
       - name: Deploy via SSH and verify internal response
