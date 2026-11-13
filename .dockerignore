@@ -1,0 +1,20 @@
+.git
+.gitignore
+.vscode
+.idea
+
+# Environments
+.env
+.env.*
+
+# Subprojects not needed for landing page build
+saas/
+server/
+
+# Dependencies & build artifacts
+**/node_modules
+**/dist
+**/dist-ssr
+**/.vite
+*.log
+

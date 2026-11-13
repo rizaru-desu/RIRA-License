@@ -1,0 +1,17 @@
+# TLS terminates at Cloudflare Tunnel.
+# Use explicit http:// scheme so Caddy auto-HTTPS stays disabled.
+
+http://license.rira.web.id {
+	reverse_proxy web:80
+}
+
+# Add one new block per subdomain later (e.g. app. / api.) with reverse_proxy to each service:
+#
+# http://app.rira.web.id {
+# 	reverse_proxy app:80
+# }
+#
+# http://api.rira.web.id {
+# 	reverse_proxy api:8080
+# }
+
