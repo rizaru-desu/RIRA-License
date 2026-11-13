@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+
+@theme {
+	/* RiraLicense Master Color Tokens — Modern Neo-Brutalism */
+	--color-cream: #f5f0e6;
+	--color-cream-dark: #eae3d2;
+	--color-yellow: #facc15;
+	--color-yellow-hover: #eab308;
+	--color-cobalt: #2855e8;
+	--color-cobalt-hover: #1e44c8;
+	--color-coral: #ff7043;
+	--color-coral-hover: #f4511e;
+	--color-ink: #171717;
+	--color-surface: #ffffff;
+
+	/* Typography */
+	--font-heading: 'Space Grotesk Variable', 'Space Grotesk', system-ui, -apple-system, sans-serif;
+	--font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+
+	/* Neo-Brutalist Hard Offset Shadows */
+	--shadow-brutal-xs: 2px 2px 0px 0px #171717;
+	--shadow-brutal-sm: 3px 3px 0px 0px #171717;
+	--shadow-brutal: 4px 4px 0px 0px #171717;
+	--shadow-brutal-md: 6px 6px 0px 0px #171717;
+	--shadow-brutal-lg: 8px 8px 0px 0px #171717;
+	--shadow-brutal-xl: 10px 10px 0px 0px #171717;
+	--shadow-brutal-yellow: 6px 6px 0px 0px #facc15;
+	--shadow-brutal-cobalt: 6px 6px 0px 0px #2855e8;
+	--shadow-brutal-coral: 6px 6px 0px 0px #ff7043;
+	--shadow-brutal-white: 4px 4px 0px 0px #ffffff;
+}
+
+@layer base {
+	html {
+		font-family: var(--font-sans);
+		background-color: var(--color-cream);
+		color: var(--color-ink);
+		scroll-behavior: smooth;
+	}
+
+	body {
+		margin: 0;
+		min-height: 100vh;
+		background-color: var(--color-cream);
+		color: var(--color-ink);
+		overflow-x: hidden;
+	}
+
+	h1,
+	h2,
+	h3,
+	h4,
+	h5,
+	h6 {
+		font-family: var(--font-heading);
+		letter-spacing: -0.03em;
+	}
+}
+
+/* Neo-Brutalist Architectural Grid & Dot Patterns (Pure CSS, Zero Blur) */
+.bg-brutal-grid {
+	background-size: 32px 32px;
+	background-image:
+		linear-gradient(to right, rgba(23, 23, 23, 0.07) 1px, transparent 1px),
+		linear-gradient(to bottom, rgba(23, 23, 23, 0.07) 1px, transparent 1px);
+}
+
+.bg-brutal-grid-white {
+	background-size: 32px 32px;
+	background-image:
+		linear-gradient(to right, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+		linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+}
+
+.bg-brutal-dots {
+	background-image: radial-gradient(#171717 1.25px, transparent 1.25px);
+	background-size: 20px 20px;
+}
