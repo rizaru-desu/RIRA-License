@@ -65,6 +65,11 @@ jobs:
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_CLIENT_SECRET }}
           tags: tag:ci
 
+      - name: Check server reachability
+        run: |
+          tailscale status
+          tailscale ping --timeout 10s "${{ secrets.SERVER_HOST }}" || true
+
       - name: Deploy via SSH and verify internal response
         uses: appleboy/ssh-action@v1
         env:
@@ -75,8 +80,8 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           envs: DEPLOY_PATH
-          script_stop: true
           script: |
+            set -e
             cd "${DEPLOY_PATH:-$HOME/RIRA-License}"
             git pull --ff-only origin main
             docker compose up -d --build
