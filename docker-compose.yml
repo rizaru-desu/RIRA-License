@@ -16,6 +16,9 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Bound to loopback only so host cloudflared can reach Caddy without exposing ports publicly
+    ports:
+      - "127.0.0.1:${CADDY_HTTP_PORT:-8080}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -23,15 +26,6 @@ services:
     depends_on:
       web:
         condition: service_healthy
-    networks:
-      - riralicense
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-    restart: unless-stopped
-    depends_on:
-      - caddy
     networks:
       - riralicense
 
