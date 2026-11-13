@@ -1,0 +1,95 @@
+# Required GitHub Secrets (in Settings -> Environments -> production -> Environment secrets,
+# or Settings -> Secrets and variables -> Actions -> Repository secrets):
+#   - TAILSCALE_OAUTH_CLIENT_ID     : Tailscale OAuth client ID (with auth_keys write scope for tag:ci)
+#   - TAILSCALE_OAUTH_CLIENT_SECRET : Tailscale OAuth client secret
+#   - SERVER_HOST                   : Server Tailscale IP (100.x.y.z) or MagicDNS hostname
+#   - SERVER_PORT                   : Custom SSH port on the server (e.g. 7022)
+#   - SERVER_USER                   : SSH username on the server
+#   - SSH_PRIVATE_KEY               : Private SSH key authorized on the server
+#
+# Optional GitHub Repository Secret:
+#   - SERVER_DEPLOY_PATH            : Path to the cloned repository on the server (defaults to ~/RIRA-License)
+
+name: Deploy Landing Page
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'landingpage/**'
+      - 'docker-compose.yml'
+      - 'Caddyfile'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & Verify Landing Page
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: landingpage
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Matches the oven/bun:1-alpine build stage in landingpage/Dockerfile
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build landing page
+        run: bun run build
+
+  deploy:
+    name: Deploy to Server via Tailscale
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://license.rira.web.id
+    steps:
+      - name: Connect to Tailscale tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_CLIENT_SECRET }}
+          tags: tag:ci
+
+      - name: Deploy via SSH and verify internal response
+        uses: appleboy/ssh-action@v1
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT || 80 }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: DEPLOY_PATH
+          script_stop: true
+          script: |
+            cd "${DEPLOY_PATH:-$HOME/RIRA-License}"
+            git pull --ff-only origin main
+            docker compose up -d --build
+            docker compose ps
+            docker compose exec -T caddy wget -qO- --header="Host: license.rira.web.id" http://localhost/ | grep -q RiraLicense
+
+      # Note: This check only passes once DNS for license.rira.web.id points at the Cloudflare Tunnel CNAME.
+      - name: Verify public HTTPS endpoint
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" https://license.rira.web.id/)
+          echo "HTTP status for https://license.rira.web.id/: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Expected HTTP 200 from https://license.rira.web.id/, got $status"
+            exit 1
+          fi
+
