@@ -7,8 +7,7 @@
 #   - SERVER_USER                   : SSH username on the server
 #   - SSH_PRIVATE_KEY               : Private SSH key authorized on the server
 #
-# Optional GitHub Repository Secret:
-#   - SERVER_DEPLOY_PATH            : Path to the cloned repository on the server (defaults to ~/RIRA-License)
+# Note: GITHUB_TOKEN is provided automatically by GitHub Actions for GHCR pushes.
 
 name: Deploy Landing Page
 
@@ -18,6 +17,7 @@ on:
       - main
     paths:
       - 'landingpage/**'
+      - 'landingpage/Dockerfile'
       - 'docker-compose.yml'
       - 'Caddyfile'
       - '.github/workflows/deploy.yml'
@@ -29,26 +29,39 @@ concurrency:
 
 jobs:
   build:
-    name: Build & Verify Landing Page
+    name: Build & Push Image to GHCR
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: landingpage
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Matches the oven/bun:1-alpine build stage in landingpage/Dockerfile
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          bun-version: latest
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build landing page
-        run: bun run build
+      - name: Build and push linux/arm64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./landingpage
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ghcr.io/rizaru-desu/rira-license-web:latest
+            ghcr.io/rizaru-desu/rira-license-web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     name: Deploy to Server via Tailscale
@@ -58,6 +71,9 @@ jobs:
       name: production
       url: https://license.rira.web.id
     steps:
+      - name: Checkout compose and Caddy files
+        uses: actions/checkout@v4
+
       - name: Connect to Tailscale tailnet
         uses: tailscale/github-action@v4
         with:
@@ -65,30 +81,33 @@ jobs:
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_CLIENT_SECRET }}
           tags: tag:ci
 
-      - name: Check server reachability
-        run: |
-          tailscale status || true
-          tailscale ping --timeout 10s "${{ secrets.SERVER_HOST }}" || true
-
-      - name: Deploy via SSH and verify internal response
-        uses: appleboy/ssh-action@v1
-        env:
-          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+      - name: Copy compose and Caddyfile to server
+        uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
           port: ${{ secrets.SERVER_PORT || '7022' }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: DEPLOY_PATH
+          source: "docker-compose.yml,Caddyfile"
+          target: "/srv/compose/license.riralabs/"
+          overwrite: true
+
+      - name: Pull image and restart stack via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT || '7022' }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            cd "${DEPLOY_PATH:-$HOME/RIRA-License}"
-            git pull --ff-only origin main
-            docker compose up -d --build
+            mkdir -p /srv/compose/license.riralabs
+            cd /srv/compose/license.riralabs
+            docker compose pull web
+            docker compose up -d
             docker compose ps
             docker compose exec -T caddy wget -qO- --header="Host: license.rira.web.id" http://localhost/ | grep -q RiraLicense
 
-      # Note: This check only passes once DNS for license.rira.web.id points at the Cloudflare Tunnel CNAME.
       - name: Verify public HTTPS endpoint
         run: |
           status=$(curl -s -o /dev/null -w "%{http_code}" https://license.rira.web.id/)
@@ -97,4 +116,3 @@ jobs:
             echo "::error::Expected HTTP 200 from https://license.rira.web.id/, got $status"
             exit 1
           fi
-

@@ -1,8 +1,6 @@
 services:
   web:
-    build:
-      context: ./landingpage
-      dockerfile: Dockerfile
+    image: ghcr.io/rizaru-desu/rira-license-web:latest
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
@@ -36,4 +34,3 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
-

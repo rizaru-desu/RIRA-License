@@ -1,5 +1,5 @@
-# Stage 1: Build the Svelte + Vite landing page
-FROM oven/bun:1-alpine AS build
+# Stage 1: Build static assets on the runner's native architecture ($BUILDPLATFORM)
+FROM --platform=$BUILDPLATFORM oven/bun:1-alpine AS build
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
-# Stage 2: Serve static files with Nginx
+# Stage 2: Serve static files with Nginx on the target platform (e.g. linux/arm64)
 FROM nginx:alpine AS runtime
 
 # Replace default nginx configuration with custom SPA config
@@ -26,4 +26,3 @@ COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
-
