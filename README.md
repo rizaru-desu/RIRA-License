@@ -2,7 +2,7 @@
 
 **Your Software. Your Licenses. Your Control.**
 
-[![GitHub stars](https://img.shields.io/github/stars/rizaru-desu/RIRA-License?style=flat-square)](https://github.com/rizaru-desu/RIRA-License/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/rizaru-desu/RIRA-License?style=flat-square)](https://github.com/rizaru-desu/RIRA-License)
 [![License: GNU AGPL-3.0](https://img.shields.io/github/license/rizaru-desu/RIRA-License?style=flat-square)](LICENSE)
 [![Deploy Landing Page](https://github.com/rizaru-desu/RIRA-License/actions/workflows/deploy.yml/badge.svg)](https://github.com/rizaru-desu/RIRA-License/actions/workflows/deploy.yml)
 
