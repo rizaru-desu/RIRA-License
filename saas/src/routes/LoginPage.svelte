@@ -5,9 +5,11 @@
 	import AuthShell from '$lib/components/layout/AuthShell.svelte';
 	import OAuthButtons from '$lib/components/auth/OAuthButtons.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
 	let email = $state('');
 	let password = $state('');
+	let rememberMe = $state(false);
 	let submitting = $state(false);
 	let errorMsg = $state('');
 	let fieldErrors = $state<Record<string, string>>({});
@@ -36,11 +38,12 @@
 		submitting = true;
 
 		try {
-			const res = await authApi.login(email, password);
+			const res = await authApi.login(email, password, rememberMe);
 			if (res.two_factor_required) {
 				twoFactorMethod = res.method ?? 'totp';
 				code = '';
 				useBackupCode = false;
+				rememberDevice = rememberMe;
 				return;
 			}
 			if (res.user) {
@@ -240,18 +243,27 @@
 						Forgot password?
 					</button>
 				</div>
-				<input
+				<PasswordInput
 					id="login-password"
-					type="password"
 					autocomplete="current-password"
 					required
 					bind:value={password}
 					placeholder="••••••••••••"
-					class="w-full rounded-md border-2 border-ink bg-cream px-3.5 py-2.5 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 				/>
 				{#if fieldErrors.password}
 					<p class="mt-1 text-xs font-semibold text-coral-hover">{fieldErrors.password}</p>
 				{/if}
+			</div>
+
+			<div class="flex items-center justify-between">
+				<label class="flex items-center gap-2.5 text-sm font-medium text-ink cursor-pointer select-none">
+					<input
+						type="checkbox"
+						bind:checked={rememberMe}
+						class="h-4 w-4 rounded border-2 border-ink accent-cobalt cursor-pointer"
+					/>
+					<span>Remember me</span>
+				</label>
 			</div>
 
 			<Button type="submit" fullWidth disabled={submitting}>
@@ -271,5 +283,17 @@
 				Create account
 			</button>
 		</p>
+
+		<p class="mt-2 text-center text-xs text-ink/65">
+			Recently deleted your account?
+			<button
+				type="button"
+				onclick={() => router.navigate('/account/restore')}
+				class="font-heading font-bold text-ink underline cursor-pointer"
+			>
+				Restore within 30 days
+			</button>
+		</p>
 	{/if}
 </AuthShell>
+

@@ -33,7 +33,7 @@ func (s *Service) Register(ctx context.Context, email, password, name string, me
 		return nil, ErrPasswordTooShort
 	}
 
-	_, err := s.store.Queries().GetUserByEmail(ctx, email)
+	_, err := s.store.Queries().GetUserByEmailIncludingDeleted(ctx, email)
 	if err == nil {
 		return nil, ErrConflictEmail
 	}

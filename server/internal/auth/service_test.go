@@ -70,6 +70,20 @@ func (m *fakeMailer) SendEmailOTP(_ context.Context, toEmail, _, code string) er
 	return nil
 }
 
+func (m *fakeMailer) SendAccountDeletionEmail(_ context.Context, toEmail, _, confirmURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, sentMail{Kind: "account_deletion", To: toEmail, Payload: confirmURL})
+	return nil
+}
+
+func (m *fakeMailer) SendAccountRestoreEmail(_ context.Context, toEmail, _, restoreURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, sentMail{Kind: "account_restore", To: toEmail, Payload: restoreURL})
+	return nil
+}
+
 func (m *fakeMailer) lastToken() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -102,6 +116,7 @@ type memStore struct {
 	emailOTPs      []sqlc.EmailOtpCode
 	auditLogs      []sqlc.AuthAuditLog
 	auditSeq       int64
+	ownedResources map[uuid.UUID][]string
 }
 
 func newMemStore(now func() time.Time) *memStore {
@@ -113,6 +128,7 @@ func newMemStore(now func() time.Time) *memStore {
 		verTokens:      make(map[uuid.UUID]sqlc.VerificationToken),
 		trustedDevices: make(map[uuid.UUID]sqlc.TrustedDevice),
 		backupCodes:    make(map[uuid.UUID]sqlc.BackupCode),
+		ownedResources: make(map[uuid.UUID][]string),
 	}
 }
 
@@ -678,6 +694,159 @@ func (s *memStore) UpdateUserPassword(_ context.Context, arg sqlc.UpdateUserPass
 	return nil
 }
 
+func (s *memStore) AnonymizeUserAuditLogs(_ context.Context, userID uuid.NullUUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.auditLogs {
+		if s.auditLogs[i].UserID.Valid && s.auditLogs[i].UserID.UUID == userID.UUID {
+			s.auditLogs[i].UserID = uuid.NullUUID{}
+			s.auditLogs[i].IpAddress = nil
+			s.auditLogs[i].UserAgent = pgtype.Text{}
+			s.auditLogs[i].Metadata = nil
+		}
+	}
+	return nil
+}
+
+func (s *memStore) DeleteUserByID(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.ownedResources, id)
+	delete(s.users, id)
+	return nil
+}
+
+func (s *memStore) DeleteUserEmailOTPs(_ context.Context, userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.emailOTPs[:0]
+	for _, otp := range s.emailOTPs {
+		if otp.UserID != userID {
+			filtered = append(filtered, otp)
+		}
+	}
+	s.emailOTPs = filtered
+	return nil
+}
+
+func (s *memStore) DeleteUserOAuthAccounts(_ context.Context, userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, acct := range s.oauthAccounts {
+		if acct.UserID == userID {
+			delete(s.oauthAccounts, k)
+		}
+	}
+	return nil
+}
+
+func (s *memStore) DeleteUserPasswordHistory(_ context.Context, userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.pwHistory[:0]
+	for _, item := range s.pwHistory {
+		if item.UserID != userID {
+			filtered = append(filtered, item)
+		}
+	}
+	s.pwHistory = filtered
+	return nil
+}
+
+func (s *memStore) DeleteUserVerificationTokens(_ context.Context, userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, tok := range s.verTokens {
+		if tok.UserID == userID {
+			delete(s.verTokens, id)
+		}
+	}
+	return nil
+}
+
+func (s *memStore) GetUserByEmailIncludingDeleted(_ context.Context, email string) (sqlc.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	target := strings.ToLower(email)
+	for _, u := range s.users {
+		if strings.ToLower(u.Email) == target {
+			return u, nil
+		}
+	}
+	return sqlc.User{}, pgx.ErrNoRows
+}
+
+func (s *memStore) GetUserByIDIncludingDeleted(_ context.Context, id uuid.UUID) (sqlc.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.users[id]
+	if !ok {
+		return sqlc.User{}, pgx.ErrNoRows
+	}
+	return u, nil
+}
+
+func (s *memStore) InvalidateAllUserVerificationTokens(_ context.Context, userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for id, tok := range s.verTokens {
+		if tok.UserID == userID && tok.UsedAt == nil {
+			tok.UsedAt = &now
+			s.verTokens[id] = tok
+		}
+	}
+	return nil
+}
+
+func (s *memStore) ListUsersForHardDelete(_ context.Context, deletedAt *time.Time) ([]uuid.UUID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if deletedAt == nil {
+		return nil, nil
+	}
+	var out []uuid.UUID
+	for _, u := range s.users {
+		if u.DeletedAt != nil && u.DeletedAt.Before(*deletedAt) {
+			out = append(out, u.ID)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) RestoreUser(_ context.Context, id uuid.UUID) (sqlc.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.users[id]
+	if !ok || u.DeletedAt == nil {
+		return sqlc.User{}, pgx.ErrNoRows
+	}
+	u.DeletedAt = nil
+	u.Status = "active"
+	u.FailedLoginAttempts = 0
+	u.LockedUntil = nil
+	s.users[id] = u
+	return u, nil
+}
+
+func (s *memStore) SoftDeleteUser(_ context.Context, id uuid.UUID) (sqlc.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.users[id]
+	if !ok || u.DeletedAt != nil {
+		return sqlc.User{}, pgx.ErrNoRows
+	}
+	now := s.now()
+	u.DeletedAt = &now
+	u.Status = "suspended"
+	u.TwoFactorEnabled = false
+	u.TwoFactorMethod = pgtype.Text{}
+	u.TotpSecretEncrypted = nil
+	u.TotpVerifiedAt = nil
+	s.users[id] = u
+	return u, nil
+}
+
 func newTestService(t *testing.T) (*Service, *memStore, *fakeMailer, *time.Time) {
 	t.Helper()
 	now := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
@@ -1029,5 +1198,313 @@ func TestEmailOTP2FAFlow(t *testing.T) {
 	}
 	if _, err := svc.VerifyTwoFactorLogin(ctx, user.ID, MethodEmail, loginOTP, "", false, testMeta()); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("expected exhausted OTP to be dead even with correct code, got %v", err)
+	}
+}
+
+func TestAccountDeletionPasswordAnd2FARequirements(t *testing.T) {
+	svc, _, mailer, _ := newTestService(t)
+	ctx := context.Background()
+
+	// 1. Password user without 2FA.
+	user, err := svc.Register(ctx, "del-pw@example.com", "strong-delete-pass-1", "Delete PW", testMeta())
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := svc.VerifyEmail(ctx, mailer.lastToken(), testMeta()); err != nil {
+		t.Fatalf("VerifyEmail failed: %v", err)
+	}
+
+	if err := svc.RequestAccountDeletion(ctx, user.ID, "wrong-password", "", "", "", testMeta()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected wrong password rejected, got %v", err)
+	}
+	if err := svc.RequestAccountDeletion(ctx, user.ID, "strong-delete-pass-1", "", "", "", testMeta()); err != nil {
+		t.Fatalf("RequestAccountDeletion failed: %v", err)
+	}
+	if !strings.Contains(mailer.lastPayload(), "/settings/account/delete/confirm?token=") {
+		t.Fatalf("unexpected deletion confirm link: %s", mailer.lastPayload())
+	}
+
+	// 2. Enable TOTP 2FA -> RequestAccountDeletion now requires password + TOTP/backup code.
+	setup, err := svc.SetupTOTP(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("SetupTOTP failed: %v", err)
+	}
+	totpCode, _ := totp.GenerateCode(setup.Secret, time.Now())
+	backupCodes, err := svc.VerifyAndEnableTOTP(ctx, user.ID, totpCode, testMeta())
+	if err != nil {
+		t.Fatalf("VerifyAndEnableTOTP failed: %v", err)
+	}
+
+	// Password alone fails when 2FA is enabled.
+	if err := svc.RequestAccountDeletion(ctx, user.ID, "strong-delete-pass-1", "", "", "", testMeta()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected missing 2FA rejected, got %v", err)
+	}
+	// Password + wrong TOTP fails.
+	if err := svc.RequestAccountDeletion(ctx, user.ID, "strong-delete-pass-1", "", "000000", "", testMeta()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected invalid TOTP rejected, got %v", err)
+	}
+	// Password + valid backup code succeeds.
+	if err := svc.RequestAccountDeletion(ctx, user.ID, "strong-delete-pass-1", "", "", backupCodes[0], testMeta()); err != nil {
+		t.Fatalf("RequestAccountDeletion with 2FA backup code failed: %v", err)
+	}
+
+	// 3. OAuth-only user (password_hash NULL) uses email OTP (max 5 attempts).
+	ghServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/login/oauth/access_token":
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "token_type": "bearer"})
+		case "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 9001, "login": "oauthdel", "name": "OAuth Del"})
+		case "/user/emails":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"email": "oauthdel@example.com", "primary": true, "verified": true}})
+		}
+	}))
+	defer ghServer.Close()
+	svc.oauthEndpoints.GitHubTokenURL = ghServer.URL + "/login/oauth/access_token"
+	svc.oauthEndpoints.GitHubUserURL = ghServer.URL + "/user"
+	svc.oauthEndpoints.GitHubEmailsURL = ghServer.URL + "/user/emails"
+
+	oauthRes, err := svc.HandleOAuthCallback(ctx, ProviderGitHub, "code", testMeta())
+	if err != nil {
+		t.Fatalf("HandleOAuthCallback failed: %v", err)
+	}
+	oauthUserID := oauthRes.User.ID
+
+	if err := svc.RequestAccountDeletion(ctx, oauthUserID, "", "", "", "", testMeta()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected OAuth deletion without OTP rejected, got %v", err)
+	}
+
+	if err := svc.SendEmailOTP(ctx, oauthUserID); err != nil {
+		t.Fatalf("SendEmailOTP failed: %v", err)
+	}
+	validOTP := mailer.lastPayload()
+
+	// 5 wrong attempts exhaust the email OTP.
+	for i := 0; i < MaxEmailOTPAttempts; i++ {
+		if err := svc.RequestAccountDeletion(ctx, oauthUserID, "", "000000", "", "", testMeta()); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("expected wrong OTP attempt %d rejected, got %v", i+1, err)
+		}
+	}
+	if err := svc.RequestAccountDeletion(ctx, oauthUserID, "", validOTP, "", "", testMeta()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected exhausted OTP rejected even with matching code, got %v", err)
+	}
+
+	// Fresh email OTP succeeds.
+	if err := svc.SendEmailOTP(ctx, oauthUserID); err != nil {
+		t.Fatalf("SendEmailOTP failed: %v", err)
+	}
+	freshOTP := mailer.lastPayload()
+	if err := svc.RequestAccountDeletion(ctx, oauthUserID, "", freshOTP, "", "", testMeta()); err != nil {
+		t.Fatalf("OAuth RequestAccountDeletion with valid OTP failed: %v", err)
+	}
+}
+
+func TestAccountDeletionConfirmSingleUseExpirySoftDeleteAndRestore(t *testing.T) {
+	svc, store, mailer, now := newTestService(t)
+	ctx := context.Background()
+
+	user, err := svc.Register(ctx, "softdel@example.com", "soft-delete-pass-12", "Soft Del", testMeta())
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := svc.VerifyEmail(ctx, mailer.lastToken(), testMeta()); err != nil {
+		t.Fatalf("VerifyEmail failed: %v", err)
+	}
+
+	// Enable TOTP + login to create active session and trusted device.
+	setup, err := svc.SetupTOTP(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("SetupTOTP failed: %v", err)
+	}
+	code, _ := totp.GenerateCode(setup.Secret, time.Now())
+	backupCodes, err := svc.VerifyAndEnableTOTP(ctx, user.ID, code, testMeta())
+	if err != nil {
+		t.Fatalf("VerifyAndEnableTOTP failed: %v", err)
+	}
+	_, err = svc.Login(ctx, "softdel@example.com", "soft-delete-pass-12", "", testMeta())
+	if err != nil {
+		t.Fatalf("Login failed: %v", err)
+	}
+	loginRes, err := svc.VerifyTwoFactorLogin(ctx, user.ID, MethodTOTP, "", backupCodes[0], true, testMeta())
+	if err != nil {
+		t.Fatalf("VerifyTwoFactorLogin failed: %v", err)
+	}
+
+	// Seed owned licenses/products/activations to verify they remain frozen on soft delete.
+	store.mu.Lock()
+	store.ownedResources[user.ID] = []string{"product:1", "license:1", "activation:1"}
+	store.mu.Unlock()
+
+	// Request deletion token and let it expire after >24h.
+	if err := svc.RequestAccountDeletion(ctx, user.ID, "soft-delete-pass-12", "", "", backupCodes[1], testMeta()); err != nil {
+		t.Fatalf("RequestAccountDeletion failed: %v", err)
+	}
+	expiredTok := mailer.lastToken()
+	*now = now.Add(25 * time.Hour)
+	if err := svc.ConfirmAccountDeletion(ctx, expiredTok, testMeta()); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected expired deletion token rejected, got %v", err)
+	}
+
+	// Issue fresh deletion token and confirm within 24h.
+	if err := svc.RequestAccountDeletion(ctx, user.ID, "soft-delete-pass-12", "", "", backupCodes[2], testMeta()); err != nil {
+		t.Fatalf("second RequestAccountDeletion failed: %v", err)
+	}
+	confirmTok := mailer.lastToken()
+	if err := svc.ConfirmAccountDeletion(ctx, confirmTok, testMeta()); err != nil {
+		t.Fatalf("ConfirmAccountDeletion failed: %v", err)
+	}
+
+	// Token is single-use.
+	if err := svc.ConfirmAccountDeletion(ctx, confirmTok, testMeta()); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected reused deletion token rejected, got %v", err)
+	}
+
+	// Soft-deleted state checks:
+	// - sessions & trusted devices cleared
+	// - 2FA cleared (two_factor_enabled=false, totp_secret_encrypted=nil)
+	// - status='suspended', deleted_at!=nil
+	// - owned resources still frozen (not deleted yet)
+	if _, _, err := svc.ValidateSession(ctx, loginRes.SessionToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected session revoked on soft delete, got %v", err)
+	}
+	store.mu.Lock()
+	deletedUser := store.users[user.ID]
+	sessCount := len(store.sessions)
+	devCount := len(store.trustedDevices)
+	ownedCount := len(store.ownedResources[user.ID])
+	store.mu.Unlock()
+
+	if deletedUser.DeletedAt == nil || deletedUser.Status != "suspended" {
+		t.Fatalf("expected user soft-deleted and suspended, got deleted_at=%v status=%s", deletedUser.DeletedAt, deletedUser.Status)
+	}
+	if deletedUser.TwoFactorEnabled || len(deletedUser.TotpSecretEncrypted) != 0 {
+		t.Fatalf("expected 2FA cleared on soft delete, got enabled=%v secretLen=%d", deletedUser.TwoFactorEnabled, len(deletedUser.TotpSecretEncrypted))
+	}
+	if sessCount != 0 || devCount != 0 {
+		t.Fatalf("expected 0 sessions and 0 trusted devices, got sessions=%d devices=%d", sessCount, devCount)
+	}
+	if ownedCount != 3 {
+		t.Fatalf("expected owned resources frozen until hard delete, got %d", ownedCount)
+	}
+
+	// Soft-deleted user gets generic ErrInvalidCredentials (401) on login.
+	if _, err := svc.Login(ctx, "softdel@example.com", "soft-delete-pass-12", "", testMeta()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected ErrInvalidCredentials on soft-deleted login, got %v", err)
+	}
+
+	// Cancel / restore within 30 days (<30d).
+	*now = now.Add(10 * 24 * time.Hour)
+	if err := svc.CancelAccountDeletion(ctx, "softdel@example.com", testMeta()); err != nil {
+		t.Fatalf("CancelAccountDeletion failed: %v", err)
+	}
+	restoreTok := mailer.lastToken()
+	if err := svc.RestoreAccount(ctx, restoreTok, testMeta()); err != nil {
+		t.Fatalf("RestoreAccount failed: %v", err)
+	}
+	// Restore token is single-use.
+	if err := svc.RestoreAccount(ctx, restoreTok, testMeta()); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected reused restore token rejected, got %v", err)
+	}
+
+	// User can log in again after restoration.
+	restoredLogin, err := svc.Login(ctx, "softdel@example.com", "soft-delete-pass-12", "", testMeta())
+	if err != nil || restoredLogin.SessionToken == "" {
+		t.Fatalf("expected login after restore to succeed, got %+v err=%v", restoredLogin, err)
+	}
+}
+
+func TestAccountDeletionHardDeleteJobAndAuditAnonymization(t *testing.T) {
+	svc, store, mailer, now := newTestService(t)
+	ctx := context.Background()
+
+	// Create User A (will exceed 30 days) and User B (will remain <30 days).
+	userA, err := svc.Register(ctx, "usera@example.com", "password-user-a-123", "User A", testMeta())
+	if err != nil {
+		t.Fatalf("Register User A failed: %v", err)
+	}
+	if err := svc.VerifyEmail(ctx, mailer.lastToken(), testMeta()); err != nil {
+		t.Fatalf("VerifyEmail User A failed: %v", err)
+	}
+	if err := svc.RequestAccountDeletion(ctx, userA.ID, "password-user-a-123", "", "", "", testMeta()); err != nil {
+		t.Fatalf("RequestAccountDeletion User A failed: %v", err)
+	}
+	if err := svc.ConfirmAccountDeletion(ctx, mailer.lastToken(), testMeta()); err != nil {
+		t.Fatalf("ConfirmAccountDeletion User A failed: %v", err)
+	}
+
+	store.mu.Lock()
+	store.ownedResources[userA.ID] = []string{"product:a", "license:a", "activation:a"}
+	store.mu.Unlock()
+
+	// Advance 20 days and soft-delete User B.
+	*now = now.Add(20 * 24 * time.Hour)
+	userB, err := svc.Register(ctx, "userb@example.com", "password-user-b-123", "User B", testMeta())
+	if err != nil {
+		t.Fatalf("Register User B failed: %v", err)
+	}
+	if err := svc.VerifyEmail(ctx, mailer.lastToken(), testMeta()); err != nil {
+		t.Fatalf("VerifyEmail User B failed: %v", err)
+	}
+	if err := svc.RequestAccountDeletion(ctx, userB.ID, "password-user-b-123", "", "", "", testMeta()); err != nil {
+		t.Fatalf("RequestAccountDeletion User B failed: %v", err)
+	}
+	if err := svc.ConfirmAccountDeletion(ctx, mailer.lastToken(), testMeta()); err != nil {
+		t.Fatalf("ConfirmAccountDeletion User B failed: %v", err)
+	}
+	store.mu.Lock()
+	store.ownedResources[userB.ID] = []string{"product:b"}
+	store.mu.Unlock()
+
+	// Advance 11 more days: User A is at 31 days (>30d), User B is at 11 days (<30d).
+	*now = now.Add(11 * 24 * time.Hour)
+
+	// User A cannot restore after 30 days.
+	sentBefore := len(mailer.sent)
+	if err := svc.CancelAccountDeletion(ctx, "usera@example.com", testMeta()); err != nil {
+		t.Fatalf("CancelAccountDeletion >30d returned error: %v", err)
+	}
+	if len(mailer.sent) != sentBefore {
+		t.Fatalf("expected no restore email sent after 30 days")
+	}
+
+	// Run background worker with a short ticker and stop cleanly.
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	worker := NewAccountDeletionWorker(svc, svc.logger, 10*time.Millisecond)
+	worker.Start(workerCtx)
+	time.Sleep(35 * time.Millisecond)
+	workerCancel()
+	worker.Stop()
+
+	store.mu.Lock()
+	_, userAExists := store.users[userA.ID]
+	_, userAOwned := store.ownedResources[userA.ID]
+	_, userBExists := store.users[userB.ID]
+	userBOwned := len(store.ownedResources[userB.ID])
+	logs := append([]sqlc.AuthAuditLog(nil), store.auditLogs...)
+	store.mu.Unlock()
+
+	if userAExists || userAOwned {
+		t.Fatalf("expected User A and owned data hard-deleted after >30d: exists=%v owned=%v", userAExists, userAOwned)
+	}
+	if !userBExists || userBOwned != 1 {
+		t.Fatalf("expected User B (<30d) retained with frozen data: exists=%v owned=%d", userBExists, userBOwned)
+	}
+
+	// Verify User A's audit logs are anonymized (user_id=NULL, ip/ua/metadata cleared, event+created_at kept).
+	foundDeletedEvent := false
+	for _, entry := range logs {
+		if entry.UserID.Valid && entry.UserID.UUID == userA.ID {
+			t.Fatalf("expected User A audit log user_id anonymized to NULL, found %+v", entry)
+		}
+		if !entry.UserID.Valid && entry.Event == "account_deleted" {
+			foundDeletedEvent = true
+			if entry.IpAddress != nil || entry.UserAgent.Valid || len(entry.Metadata) != 0 || entry.CreatedAt.IsZero() {
+				t.Fatalf("expected anonymized audit log to clear ip/ua/metadata and keep created_at: %+v", entry)
+			}
+		}
+	}
+	if !foundDeletedEvent {
+		t.Fatal("expected account_deleted audit event preserved after anonymization")
 	}
 }

@@ -13,6 +13,7 @@
 package router
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -42,9 +43,24 @@ func New(
 	r.Use(CORS(cfg.CORSAllowedOrigins))
 
 	// Health
-	r.Get("/", health.Liveness)
+	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Query().Get("state") != "" && (req.URL.Query().Get("code") != "" || req.URL.Query().Get("error") != "") {
+			authHandler.OAuthCallback(w, req)
+			return
+		}
+		health.Liveness(w, req)
+	})
 	r.Get("/healthz", health.Liveness)
 	r.Get("/readyz", health.Readiness)
+
+	// Top-level OAuth callback aliases
+	r.Get("/callback", authHandler.OAuthCallback)
+	r.Get("/auth/callback", authHandler.OAuthCallback)
+	r.Get("/auth/{provider}/callback", authHandler.OAuthCallback)
+	r.Get("/oauth/callback", authHandler.OAuthCallback)
+	r.Get("/oauth/{provider}/callback", authHandler.OAuthCallback)
+	r.Get("/api/auth/callback/{provider}", authHandler.OAuthCallback)
+	r.Get("/api/oauth/{provider}/callback", authHandler.OAuthCallback)
 
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		// Public endpoints
@@ -57,6 +73,9 @@ func New(
 		r.Post("/reset-password", authHandler.ResetPassword)
 		r.Get("/email/confirm", authHandler.ConfirmEmailChange)
 		r.Post("/email/confirm", authHandler.ConfirmEmailChange)
+		r.Post("/account/delete/confirm", authHandler.ConfirmAccountDeletion)
+		r.Post("/account/delete/cancel", authHandler.CancelAccountDeletion)
+		r.Post("/account/restore", authHandler.RestoreAccount)
 		r.Get("/providers", authHandler.Providers)
 
 		// OAuth
@@ -82,6 +101,7 @@ func New(
 			r.Post("/2fa/totp/setup", authHandler.SetupTOTP)
 			r.Post("/2fa/totp/disable", authHandler.DisableTOTP)
 			r.Post("/2fa/backup-codes/regenerate", authHandler.RegenerateBackupCodes)
+			r.Post("/account/delete/request", authHandler.RequestAccountDeletion)
 		})
 	})
 

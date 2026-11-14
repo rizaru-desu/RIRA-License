@@ -23,3 +23,12 @@ WHERE created_at >= $1
 GROUP BY date_trunc('day', created_at), event
 ORDER BY day ASC, event ASC;
 
+-- name: AnonymizeUserAuditLogs :exec
+UPDATE auth_audit_log
+SET user_id = NULL,
+    ip_address = NULL,
+    user_agent = NULL,
+    metadata = NULL
+WHERE user_id = $1;
+
+

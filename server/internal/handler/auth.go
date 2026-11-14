@@ -91,8 +91,9 @@ type emailOnlyRequest struct {
 }
 
 type loginRequest struct {
-	Email    string `json:"email" validate:"required,email,max=254"`
-	Password string `json:"password" validate:"required,min=1,max=128"`
+	Email      string `json:"email" validate:"required,email,max=254"`
+	Password   string `json:"password" validate:"required,min=1,max=128"`
+	RememberMe bool   `json:"remember_me"`
 }
 
 type resetPasswordRequest struct {
@@ -239,7 +240,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if res.TwoFactorRequired {
-		h.setTwoFactorChallengeCookie(w, res.ChallengeUserID, res.TwoFactorMethod)
+		h.setTwoFactorChallengeCookie(w, res.ChallengeUserID, res.TwoFactorMethod, req.RememberMe)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"two_factor_required": true,
 			"method":              res.TwoFactorMethod,
@@ -247,7 +248,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setSessionCookie(w, res.SessionToken, res.SessionExpiresAt)
+	h.setSessionCookie(w, res.SessionToken, res.SessionExpiresAt, req.RememberMe)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"two_factor_required": false,
 		"user":                res.User,
@@ -488,17 +489,20 @@ func (h *AuthHandler) handleServiceError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
-	http.SetCookie(w, &http.Cookie{
+func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time, rememberMe bool) {
+	cookie := &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
 		Path:     "/",
-		Expires:  expiresAt,
-		MaxAge:   int(time.Until(expiresAt).Seconds()),
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
+	if rememberMe {
+		cookie.Expires = expiresAt
+		cookie.MaxAge = int(time.Until(expiresAt).Seconds())
+	}
+	http.SetCookie(w, cookie)
 }
 
 func (h *AuthHandler) setTrustedDeviceCookie(w http.ResponseWriter, token string, expiresAt time.Time) {

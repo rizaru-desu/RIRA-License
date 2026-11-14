@@ -14,6 +14,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const anonymizeUserAuditLogs = `-- name: AnonymizeUserAuditLogs :exec
+UPDATE auth_audit_log
+SET user_id = NULL,
+    ip_address = NULL,
+    user_agent = NULL,
+    metadata = NULL
+WHERE user_id = $1
+`
+
+func (q *Queries) AnonymizeUserAuditLogs(ctx context.Context, userID uuid.NullUUID) error {
+	_, err := q.db.Exec(ctx, anonymizeUserAuditLogs, userID)
+	return err
+}
+
 const countAuthEventsByDay = `-- name: CountAuthEventsByDay :many
 SELECT
     date_trunc('day', created_at)::timestamptz AS day,

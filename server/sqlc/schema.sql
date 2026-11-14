@@ -1,4 +1,4 @@
--- Combined auth v1 schema matching server/migrations/000001..000009.
+-- Combined auth v1 schema matching server/migrations/000001..000010.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -65,7 +65,7 @@ CREATE INDEX sessions_expires_at_idx ON sessions (expires_at);
 CREATE TABLE verification_tokens (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type       TEXT NOT NULL CHECK (type IN ('email_verification', 'password_reset', 'email_change')),
+    type       TEXT NOT NULL CHECK (type IN ('email_verification', 'password_reset', 'email_change', 'account_deletion')),
     token_hash TEXT NOT NULL UNIQUE,
     new_email  TEXT NULL,
     expires_at TIMESTAMPTZ NOT NULL,

@@ -104,3 +104,22 @@ SET used_at = now()
 WHERE id = $1
   AND used_at IS NULL
 RETURNING *;
+
+-- name: InvalidateAllUserVerificationTokens :exec
+UPDATE verification_tokens
+SET used_at = now()
+WHERE user_id = $1
+  AND used_at IS NULL;
+
+-- name: DeleteUserVerificationTokens :exec
+DELETE FROM verification_tokens
+WHERE user_id = $1;
+
+-- name: DeleteUserPasswordHistory :exec
+DELETE FROM password_history
+WHERE user_id = $1;
+
+-- name: DeleteUserEmailOTPs :exec
+DELETE FROM email_otp_codes
+WHERE user_id = $1;
+

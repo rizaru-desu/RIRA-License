@@ -120,6 +120,26 @@ func (m *smtpMailer) SendEmailOTP(ctx context.Context, toEmail, name, code strin
 	return m.send(ctx, toEmail, subject, body)
 }
 
+func (m *smtpMailer) SendAccountDeletionEmail(ctx context.Context, toEmail, name, confirmURL string) error {
+	subject := "Confirm your RiraLicense account deletion"
+	body := fmt.Sprintf(
+		"Hello %s,\n\nConfirm deletion of your RiraLicense account by opening this link:\n%s\n\nThis link expires in 24 hours. After confirmation, your account enters a 30-day grace period before permanent deletion.\n",
+		name,
+		confirmURL,
+	)
+	return m.send(ctx, toEmail, subject, body)
+}
+
+func (m *smtpMailer) SendAccountRestoreEmail(ctx context.Context, toEmail, name, restoreURL string) error {
+	subject := "Restore your RiraLicense account"
+	body := fmt.Sprintf(
+		"Hello %s,\n\nRestore your RiraLicense account and cancel scheduled deletion by opening this link:\n%s\n\nThis link expires in 24 hours.\n",
+		name,
+		restoreURL,
+	)
+	return m.send(ctx, toEmail, subject, body)
+}
+
 func (m *smtpMailer) send(ctx context.Context, toEmail, subject, body string) error {
 	msg := gomail.NewMsg()
 	if err := msg.From(m.from); err != nil {
@@ -157,6 +177,14 @@ func (m *devLogMailer) SendEmailChangeEmail(_ context.Context, toEmail, _ string
 
 func (m *devLogMailer) SendEmailOTP(_ context.Context, toEmail, _ string, code string) error {
 	return m.logDev("email_otp", toEmail, "otp_code", code)
+}
+
+func (m *devLogMailer) SendAccountDeletionEmail(_ context.Context, toEmail, _ string, confirmURL string) error {
+	return m.logDev("account_deletion_email", toEmail, "confirm_url", confirmURL)
+}
+
+func (m *devLogMailer) SendAccountRestoreEmail(_ context.Context, toEmail, _ string, restoreURL string) error {
+	return m.logDev("account_restore_email", toEmail, "restore_url", restoreURL)
 }
 
 func (m *devLogMailer) logDev(kind, toEmail, field, value string) error {

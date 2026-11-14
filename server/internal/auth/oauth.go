@@ -123,8 +123,6 @@ func (s *Service) HandleOAuthCallback(ctx context.Context, provider, code string
 }
 
 func (s *Service) oauthConfigFor(provider string) (*oauth2.Config, error) {
-	callbackURL := s.appURL + "/api/v1/auth/oauth/" + provider + "/callback"
-
 	switch provider {
 	case ProviderGitHub:
 		if !s.oauthCfg.GitHubEnabled() {
@@ -133,7 +131,7 @@ func (s *Service) oauthConfigFor(provider string) (*oauth2.Config, error) {
 		return &oauth2.Config{
 			ClientID:     s.oauthCfg.GitHubClientID,
 			ClientSecret: s.oauthCfg.GitHubClientSecret,
-			RedirectURL:  callbackURL,
+			RedirectURL:  s.oauthCfg.GitHubRedirectURL,
 			Scopes:       []string{"read:user", "user:email"},
 			Endpoint: oauth2.Endpoint{
 				AuthURL:  s.oauthEndpoints.GitHubAuthURL,
@@ -145,10 +143,14 @@ func (s *Service) oauthConfigFor(provider string) (*oauth2.Config, error) {
 		if !s.oauthCfg.GoogleEnabled() {
 			return nil, ErrProviderDisabled
 		}
+		redirectURL := s.oauthCfg.GoogleRedirectURL
+		if redirectURL == "" {
+			redirectURL = s.appURL + "/api/v1/auth/oauth/" + provider + "/callback"
+		}
 		return &oauth2.Config{
 			ClientID:     s.oauthCfg.GoogleClientID,
 			ClientSecret: s.oauthCfg.GoogleClientSecret,
-			RedirectURL:  callbackURL,
+			RedirectURL:  redirectURL,
 			Scopes:       []string{"openid", "email", "profile"},
 			Endpoint: oauth2.Endpoint{
 				AuthURL:  s.oauthEndpoints.GoogleAuthURL,
@@ -185,7 +187,7 @@ func (s *Service) resolveOrCreateOAuthUser(ctx context.Context, provider string,
 		return sqlc.User{}, ErrOAuthEmailUnavailable
 	}
 
-	existing, err := s.store.Queries().GetUserByEmail(ctx, email)
+	existing, err := s.store.Queries().GetUserByEmailIncludingDeleted(ctx, email)
 	if err == nil {
 		if existing.Status == "suspended" || existing.DeletedAt != nil {
 			return existing, nil
@@ -287,6 +289,7 @@ func (s *Service) fetchGitHubProfile(ctx context.Context, accessToken string) (*
 		ID        int64  `json:"id"`
 		Login     string `json:"login"`
 		Name      string `json:"name"`
+		Email     string `json:"email"`
 		AvatarURL string `json:"avatar_url"`
 	}
 	if err := s.fetchJSON(ctx, s.oauthEndpoints.GitHubUserURL, accessToken, &ghUser); err != nil {
@@ -302,7 +305,7 @@ func (s *Service) fetchGitHubProfile(ctx context.Context, accessToken string) (*
 		Verified bool   `json:"verified"`
 	}
 	if err := s.fetchJSON(ctx, s.oauthEndpoints.GitHubEmailsURL, accessToken, &ghEmails); err != nil {
-		return nil, ErrOAuthExchange
+		s.logger.Warn("github emails fetch failed", "err", err)
 	}
 
 	var primaryEmail string
@@ -311,6 +314,17 @@ func (s *Service) fetchGitHubProfile(ctx context.Context, accessToken string) (*
 			primaryEmail = entry.Email
 			break
 		}
+	}
+	if primaryEmail == "" {
+		for _, entry := range ghEmails {
+			if entry.Verified && entry.Email != "" {
+				primaryEmail = entry.Email
+				break
+			}
+		}
+	}
+	if primaryEmail == "" && strings.TrimSpace(ghUser.Email) != "" {
+		primaryEmail = strings.TrimSpace(ghUser.Email)
 	}
 	if primaryEmail == "" {
 		return nil, ErrOAuthEmailUnavailable

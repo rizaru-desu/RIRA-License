@@ -1,6 +1,6 @@
 <script lang="ts">
 	import QRCode from 'qrcode';
-	import { Copy, Check, ShieldCheck, KeyRound, Mail, LogOut } from '@lucide/svelte';
+	import { Copy, Check, ShieldCheck, KeyRound, Mail, LogOut, Trash2 } from '@lucide/svelte';
 	import { ApiError, authApi, type EnableTwoFactorResponse } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { router } from '$lib/stores/router.svelte';
@@ -8,6 +8,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
 	let errorMsg = $state('');
 	let successMsg = $state('');
@@ -48,6 +49,16 @@
 	let newEmail = $state('');
 	let emailChangePassword = $state('');
 	let emailChangeLoading = $state(false);
+
+	// Account deletion (Danger Zone) state
+	let deletePassword = $state('');
+	let deleteEmailOtp = $state('');
+	let deleteEmailOtpSent = $state(false);
+	let deleteSendingOtp = $state(false);
+	let deleteTwoFactorCode = $state('');
+	let deleteUseBackup = $state(false);
+	let deleteLoading = $state(false);
+	let deleteStepTwo = $state(false);
 
 	async function startTOTPSetup() {
 		errorMsg = '';
@@ -226,6 +237,64 @@
 			router.navigate('/login', true);
 		} catch (err) {
 			errorMsg = err instanceof ApiError ? err.message : 'Failed to revoke sessions.';
+		}
+	}
+
+	async function sendDeleteEmailOTP() {
+		errorMsg = '';
+		successMsg = '';
+		deleteSendingOtp = true;
+		try {
+			await authApi.sendEmailOTP();
+			deleteEmailOtpSent = true;
+			successMsg = 'A 6-digit verification code has been sent to your email.';
+		} catch (err) {
+			errorMsg = err instanceof ApiError ? err.message : 'Failed to send verification code.';
+		} finally {
+			deleteSendingOtp = false;
+		}
+	}
+
+	async function handleRequestAccountDeletion(e: SubmitEvent) {
+		e.preventDefault();
+		errorMsg = '';
+		successMsg = '';
+		deleteLoading = true;
+		try {
+			const user = authStore.user;
+			if (!user) return;
+
+			const body: {
+				password?: string;
+				email_otp?: string;
+				code?: string;
+				backup_code?: string;
+			} = {};
+
+			if (user.has_password) {
+				body.password = deletePassword;
+			} else {
+				body.email_otp = deleteEmailOtp.trim();
+			}
+
+			if (user.two_factor_enabled) {
+				if (deleteUseBackup) {
+					body.backup_code = deleteTwoFactorCode.trim();
+				} else if (user.has_password || user.two_factor_method === 'totp') {
+					body.code = deleteTwoFactorCode.trim();
+				}
+			}
+
+			await authApi.requestAccountDeletion(body);
+			deleteStepTwo = true;
+			deletePassword = '';
+			deleteEmailOtp = '';
+			deleteTwoFactorCode = '';
+		} catch (err) {
+			errorMsg =
+				err instanceof ApiError ? err.message : 'Failed to request account deletion.';
+		} finally {
+			deleteLoading = false;
 		}
 	}
 
@@ -411,11 +480,9 @@
 								Regenerate Backup Codes
 							</h3>
 							{#if authStore.user.has_password}
-								<input
-									type="password"
+								<PasswordInput
 									bind:value={regenPassword}
 									placeholder="Current password"
-									class="w-full rounded-md border-2 border-ink bg-cream px-3 py-2 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 								/>
 							{/if}
 							<input
@@ -434,12 +501,10 @@
 								Disable Two-Factor Authentication
 							</h3>
 							{#if authStore.user.has_password}
-								<input
-									type="password"
+								<PasswordInput
 									required
 									bind:value={disablePassword}
 									placeholder="Current password"
-									class="w-full rounded-md border-2 border-ink bg-cream px-3 py-2 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 								/>
 							{/if}
 							<input
@@ -490,12 +555,10 @@
 								<label for="cur-pw" class="mb-1 block font-heading text-xs font-bold uppercase text-ink">
 									Current Password
 								</label>
-								<input
+								<PasswordInput
 									id="cur-pw"
-									type="password"
 									required
 									bind:value={currentPassword}
-									class="w-full rounded-md border-2 border-ink bg-cream px-3 py-2 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 								/>
 							</div>
 						{/if}
@@ -503,13 +566,11 @@
 							<label for="new-pw" class="mb-1 block font-heading text-xs font-bold uppercase text-ink">
 								New Password (min 12 chars)
 							</label>
-							<input
+							<PasswordInput
 								id="new-pw"
-								type="password"
 								required
 								minlength={12}
 								bind:value={newPassword}
-								class="w-full rounded-md border-2 border-ink bg-cream px-3 py-2 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 							/>
 						</div>
 						<Button type="submit" disabled={passwordLoading}>
@@ -543,12 +604,10 @@
 								<label for="email-cur-pw" class="mb-1 block font-heading text-xs font-bold uppercase text-ink">
 									Current Password
 								</label>
-								<input
+								<PasswordInput
 									id="email-cur-pw"
-									type="password"
 									required
 									bind:value={emailChangePassword}
-									class="w-full rounded-md border-2 border-ink bg-cream px-3 py-2 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 								/>
 							</div>
 						{/if}
@@ -574,6 +633,157 @@
 					</Button>
 				</div>
 			</Card>
+
+			<!-- Danger Zone -->
+			<Card class="border-coral-hover bg-coral/15">
+				<div class="flex flex-wrap items-center justify-between gap-3">
+					<div class="flex items-center gap-2.5">
+						<Trash2 class="h-5 w-5 text-ink" />
+						<h2 class="font-heading text-xl font-extrabold text-ink">Danger Zone</h2>
+					</div>
+					<Badge variant="coral">30-Day Grace Period</Badge>
+				</div>
+
+				<p class="mt-2 text-sm text-ink/90">
+					Deleting your account will <strong>log you out everywhere immediately</strong> and
+					revoke all sessions and trusted devices. Your account and all owned
+					<strong>licenses, products, and activations</strong> will be frozen during a 30-day
+					grace period and <strong>permanently deleted after 30 days</strong>.
+				</p>
+
+				{#if deleteStepTwo}
+					<div class="mt-5 rounded-md border-2 border-ink bg-surface p-4 space-y-2 shadow-brutal-xs">
+						<h3 class="font-heading text-base font-extrabold text-ink">
+							Step 2: Check your email
+						</h3>
+						<p class="text-sm text-ink/85">
+							We sent a 24-hour confirmation link to
+							<span class="font-mono font-bold">{authStore.user.email}</span>. Open the link
+							in that email and click the final <strong>Delete my account</strong> button to
+							confirm account deletion.
+						</p>
+						<div class="pt-1">
+							<Button
+								variant="secondary"
+								size="sm"
+								onclick={() => (deleteStepTwo = false)}
+							>
+								Request Another Link
+							</Button>
+						</div>
+					</div>
+				{:else}
+					<form
+						onsubmit={handleRequestAccountDeletion}
+						class="mt-5 max-w-md space-y-3 border-t-2 border-ink/20 pt-5"
+					>
+						<h3 class="font-heading text-sm font-extrabold uppercase tracking-wide text-ink">
+							Step 1: Verify Your Identity to Delete Account
+						</h3>
+
+						{#if authStore.user.has_password}
+							<div>
+								<label
+									for="del-current-pw"
+									class="mb-1 block font-heading text-xs font-bold uppercase text-ink"
+								>
+									Current Password
+								</label>
+								<PasswordInput
+									id="del-current-pw"
+									required
+									bind:value={deletePassword}
+									placeholder="Enter your password"
+								/>
+							</div>
+						{:else}
+							<div class="space-y-2">
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<label
+										for="del-email-otp"
+										class="font-heading text-xs font-bold uppercase text-ink"
+									>
+										Email Verification Code (6 digits)
+									</label>
+									<button
+										type="button"
+										disabled={deleteSendingOtp}
+										onclick={sendDeleteEmailOTP}
+										class="font-heading text-xs font-bold text-cobalt underline cursor-pointer"
+									>
+										{deleteSendingOtp
+											? 'Sending...'
+											: deleteEmailOtpSent
+												? 'Resend code by email'
+												: 'Send code by email'}
+									</button>
+								</div>
+								<input
+									id="del-email-otp"
+									type="text"
+									inputmode="numeric"
+									required
+									bind:value={deleteEmailOtp}
+									placeholder="000000"
+									class="w-full rounded-md border-2 border-ink bg-surface px-3 py-2 font-mono text-sm font-bold tracking-widest text-ink focus:outline-none focus:ring-2 focus:ring-cobalt"
+								/>
+							</div>
+						{/if}
+
+						{#if authStore.user.two_factor_enabled && (authStore.user.has_password || authStore.user.two_factor_method === 'totp' || deleteUseBackup)}
+							<div class="space-y-1.5">
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<label
+										for="del-2fa-code"
+										class="font-heading text-xs font-bold uppercase text-ink"
+									>
+										{deleteUseBackup
+											? '2FA Backup Code'
+											: authStore.user.two_factor_method === 'email'
+												? '2FA Email OTP Code'
+												: '2FA Authenticator Code'}
+									</label>
+									<div class="flex items-center gap-3">
+										{#if authStore.user.two_factor_method === 'email' && authStore.user.has_password && !deleteUseBackup}
+											<button
+												type="button"
+												disabled={deleteSendingOtp}
+												onclick={sendDeleteEmailOTP}
+												class="font-heading text-xs font-bold text-ink underline cursor-pointer"
+											>
+												Send code by email
+											</button>
+										{/if}
+										<button
+											type="button"
+											onclick={() => {
+												deleteUseBackup = !deleteUseBackup;
+												deleteTwoFactorCode = '';
+											}}
+											class="font-heading text-xs font-bold text-cobalt underline cursor-pointer"
+										>
+											{deleteUseBackup ? 'Use 2FA code' : 'Use backup code'}
+										</button>
+									</div>
+								</div>
+								<input
+									id="del-2fa-code"
+									type="text"
+									required
+									bind:value={deleteTwoFactorCode}
+									placeholder={deleteUseBackup ? 'XXXX-XXXX' : '000000'}
+									class="w-full rounded-md border-2 border-ink bg-surface px-3 py-2 font-mono text-sm font-bold tracking-widest text-ink focus:outline-none focus:ring-2 focus:ring-cobalt"
+								/>
+							</div>
+						{/if}
+
+						<Button type="submit" variant="coral" disabled={deleteLoading}>
+							{deleteLoading ? 'Sending Confirmation Email...' : 'Request Account Deletion'}
+						</Button>
+					</form>
+				{/if}
+			</Card>
 		</div>
 	{/if}
 </AppShell>
+

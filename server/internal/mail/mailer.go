@@ -28,4 +28,6 @@ type Mailer interface {
 	SendPasswordResetEmail(ctx context.Context, toEmail, name, resetURL string) error
 	SendEmailChangeEmail(ctx context.Context, toEmail, name, confirmURL string) error
 	SendEmailOTP(ctx context.Context, toEmail, name, code string) error
+	SendAccountDeletionEmail(ctx context.Context, toEmail, name, confirmURL string) error
+	SendAccountRestoreEmail(ctx context.Context, toEmail, name, restoreURL string) error
 }

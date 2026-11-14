@@ -94,6 +94,36 @@ func (q *Queries) CreateVerificationToken(ctx context.Context, arg CreateVerific
 	return i, err
 }
 
+const deleteUserEmailOTPs = `-- name: DeleteUserEmailOTPs :exec
+DELETE FROM email_otp_codes
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserEmailOTPs(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserEmailOTPs, userID)
+	return err
+}
+
+const deleteUserPasswordHistory = `-- name: DeleteUserPasswordHistory :exec
+DELETE FROM password_history
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserPasswordHistory(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserPasswordHistory, userID)
+	return err
+}
+
+const deleteUserVerificationTokens = `-- name: DeleteUserVerificationTokens :exec
+DELETE FROM verification_tokens
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserVerificationTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserVerificationTokens, userID)
+	return err
+}
+
 const getLatestActiveEmailOTP = `-- name: GetLatestActiveEmailOTP :one
 SELECT id, user_id, code_hash, attempts, expires_at, used_at, created_at
 FROM email_otp_codes
@@ -235,6 +265,18 @@ WHERE user_id = $1
 
 func (q *Queries) InvalidateActiveEmailOTPs(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, invalidateActiveEmailOTPs, userID)
+	return err
+}
+
+const invalidateAllUserVerificationTokens = `-- name: InvalidateAllUserVerificationTokens :exec
+UPDATE verification_tokens
+SET used_at = now()
+WHERE user_id = $1
+  AND used_at IS NULL
+`
+
+func (q *Queries) InvalidateAllUserVerificationTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, invalidateAllUserVerificationTokens, userID)
 	return err
 }
 

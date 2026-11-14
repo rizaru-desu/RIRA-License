@@ -24,24 +24,27 @@ import (
 )
 
 const (
-	SessionAbsoluteTTL     = 30 * 24 * time.Hour
-	SessionIdleTimeout     = 24 * time.Hour
-	TrustedDeviceTTL       = 30 * 24 * time.Hour
-	EmailVerificationTTL   = 24 * time.Hour
-	PasswordResetTTL       = time.Hour
-	EmailChangeTTL         = 24 * time.Hour
-	EmailOTPTTL            = 10 * time.Minute
-	MaxFailedLoginAttempts = 5
-	AccountLockDuration    = 15 * time.Minute
-	MaxEmailOTPAttempts    = 5
-	TOTPIssuer             = "RiraLicense"
-	TokenTypeEmailVerify   = "email_verification"
-	TokenTypePasswordReset = "password_reset"
-	TokenTypeEmailChange   = "email_change"
-	ProviderGitHub         = "github"
-	ProviderGoogle         = "google"
-	MethodTOTP             = "totp"
-	MethodEmail            = "email"
+	SessionAbsoluteTTL         = 30 * 24 * time.Hour
+	SessionIdleTimeout         = 24 * time.Hour
+	TrustedDeviceTTL           = 30 * 24 * time.Hour
+	EmailVerificationTTL       = 24 * time.Hour
+	PasswordResetTTL           = time.Hour
+	EmailChangeTTL             = 24 * time.Hour
+	AccountDeletionTTL         = 24 * time.Hour
+	AccountDeletionGracePeriod = 30 * 24 * time.Hour
+	EmailOTPTTL                = 10 * time.Minute
+	MaxFailedLoginAttempts     = 5
+	AccountLockDuration        = 15 * time.Minute
+	MaxEmailOTPAttempts        = 5
+	TOTPIssuer                 = "RiraLicense"
+	TokenTypeEmailVerify       = "email_verification"
+	TokenTypePasswordReset     = "password_reset"
+	TokenTypeEmailChange       = "email_change"
+	TokenTypeAccountDeletion   = "account_deletion"
+	ProviderGitHub             = "github"
+	ProviderGoogle             = "google"
+	MethodTOTP                 = "totp"
+	MethodEmail                = "email"
 )
 
 var (

@@ -37,3 +37,4 @@
 <span class={cn(badgeVariants({ variant }), className)}>
 	{@render children?.()}
 </span>
+

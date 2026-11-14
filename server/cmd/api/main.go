@@ -73,6 +73,13 @@ func main() {
 	authSvc := auth.NewService(store, mailer, cfg, logger)
 	authHandler := handler.NewAuthHandler(authSvc, cfg, limiters, logger)
 
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+
+	deletionWorker := auth.NewAccountDeletionWorker(authSvc, logger, auth.DefaultHardDeleteInterval)
+	deletionWorker.Start(workerCtx)
+	defer deletionWorker.Stop()
+
 	healthSvc := service.NewHealthService(cfg.Env)
 	healthHandler := handler.NewHealthHandler(healthSvc)
 
@@ -101,6 +108,9 @@ func main() {
 	<-stop
 
 	logger.Info("shutting down server...")
+
+	workerCancel()
+	deletionWorker.Stop()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

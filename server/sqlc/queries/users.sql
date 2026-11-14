@@ -123,3 +123,53 @@ INSERT INTO oauth_accounts (
 ON CONFLICT (provider, provider_user_id) DO NOTHING
 RETURNING *;
 
+-- name: GetUserByIDIncludingDeleted :one
+SELECT *
+FROM users
+WHERE id = $1
+LIMIT 1;
+
+-- name: GetUserByEmailIncludingDeleted :one
+SELECT *
+FROM users
+WHERE lower(email) = lower($1)
+LIMIT 1;
+
+-- name: SoftDeleteUser :one
+UPDATE users
+SET deleted_at = now(),
+    status = 'suspended',
+    two_factor_enabled = false,
+    two_factor_method = NULL,
+    totp_secret_encrypted = NULL,
+    totp_verified_at = NULL
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: RestoreUser :one
+UPDATE users
+SET deleted_at = NULL,
+    status = 'active',
+    failed_login_attempts = 0,
+    locked_until = NULL
+WHERE id = $1
+  AND deleted_at IS NOT NULL
+RETURNING *;
+
+-- name: ListUsersForHardDelete :many
+SELECT id
+FROM users
+WHERE deleted_at IS NOT NULL
+  AND deleted_at < $1
+ORDER BY deleted_at ASC;
+
+-- name: DeleteUserOAuthAccounts :exec
+DELETE FROM oauth_accounts
+WHERE user_id = $1;
+
+-- name: DeleteUserByID :exec
+DELETE FROM users
+WHERE id = $1;
+
+

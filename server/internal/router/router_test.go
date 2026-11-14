@@ -21,12 +21,15 @@ import (
 
 	"riralicense/internal/auth"
 	"riralicense/internal/config"
+	"riralicense/internal/crypto"
 	"riralicense/internal/db/sqlc"
 	"riralicense/internal/handler"
 	"riralicense/internal/mail"
 	"riralicense/internal/ratelimit"
 	"riralicense/internal/service"
 )
+
+var testAuthUserID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 type noopStore struct {
 	sqlc.Querier
@@ -39,10 +42,47 @@ func (n *noopStore) WithTx(_ context.Context, fn func(q sqlc.Querier) error) err
 func (n *noopStore) GetUserByEmail(_ context.Context, _ string) (sqlc.User, error) {
 	return sqlc.User{}, pgx.ErrNoRows
 }
+func (n *noopStore) GetUserByEmailIncludingDeleted(_ context.Context, _ string) (sqlc.User, error) {
+	return sqlc.User{}, pgx.ErrNoRows
+}
+func (n *noopStore) GetUserByID(_ context.Context, id uuid.UUID) (sqlc.User, error) {
+	if id == testAuthUserID {
+		return sqlc.User{
+			ID:     testAuthUserID,
+			Email:  "active@example.com",
+			Name:   "Active",
+			Status: "active",
+		}, nil
+	}
+	return sqlc.User{}, pgx.ErrNoRows
+}
+func (n *noopStore) GetLatestActiveEmailOTP(_ context.Context, _ uuid.UUID) (sqlc.EmailOtpCode, error) {
+	return sqlc.EmailOtpCode{}, pgx.ErrNoRows
+}
+func (n *noopStore) GetVerificationTokenByHash(_ context.Context, _ sqlc.GetVerificationTokenByHashParams) (sqlc.VerificationToken, error) {
+	return sqlc.VerificationToken{}, pgx.ErrNoRows
+}
 func (n *noopStore) InsertAuthAuditLog(_ context.Context, _ sqlc.InsertAuthAuditLogParams) error {
 	return nil
 }
-func (n *noopStore) GetSessionWithUserByTokenHash(_ context.Context, _ string) (sqlc.GetSessionWithUserByTokenHashRow, error) {
+func (n *noopStore) TouchSessionActivity(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+func (n *noopStore) GetSessionWithUserByTokenHash(_ context.Context, tokenHash string) (sqlc.GetSessionWithUserByTokenHashRow, error) {
+	if tokenHash == crypto.HashToken("valid-test-session") {
+		now := time.Now()
+		return sqlc.GetSessionWithUserByTokenHashRow{
+			SessionID:             uuid.New(),
+			SessionUserID:         testAuthUserID,
+			SessionTokenHash:      tokenHash,
+			SessionExpiresAt:      now.Add(24 * time.Hour),
+			SessionLastActivityAt: now,
+			ID:                    testAuthUserID,
+			Email:                 "active@example.com",
+			Name:                  "Active",
+			Status:                "active",
+		}, nil
+	}
 	return sqlc.GetSessionWithUserByTokenHashRow{}, pgx.ErrNoRows
 }
 func (n *noopStore) DeleteSessionByTokenHash(_ context.Context, _ string) error {
@@ -132,6 +172,72 @@ func TestRouterValidationRateLimitAndDisabledOAuth(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for unauthenticated /me, got %d", rec.Code)
+	}
+
+	// 6. Account deletion endpoints enforce auth and validator/v10 body validation.
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/delete/request", bytes.NewBufferString(`{"password":"secret"}`))
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated /account/delete/request, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/delete/confirm", bytes.NewBufferString(`{"token":"short"}`))
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid /account/delete/confirm payload, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/restore", bytes.NewBufferString(`{"token":"short"}`))
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid /account/restore payload, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/delete/cancel", bytes.NewBufferString(`{"email":"not-an-email"}`))
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid /account/delete/cancel payload, got %d", rec.Code)
+	}
+
+	for i := 0; i < 3; i++ {
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/delete/cancel", bytes.NewBufferString(`{"email":"deleted@example.com"}`))
+		req.RemoteAddr = "203.0.113.20:12345"
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("cancel attempt %d expected 200, got %d", i+1, rec.Code)
+		}
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/delete/cancel", bytes.NewBufferString(`{"email":"deleted@example.com"}`))
+	req.RemoteAddr = "203.0.113.20:12345"
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on 4th account delete cancel attempt, got %d", rec.Code)
+	}
+
+	// 7. Authenticated /account/delete/request enforces 3/hr rate limit per account + per IP.
+	for i := 0; i < 3; i++ {
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/delete/request", bytes.NewBufferString(`{"email_otp":"000000"}`))
+		req.RemoteAddr = "203.0.113.30:12345"
+		req.AddCookie(&http.Cookie{Name: handler.SessionCookieName, Value: "valid-test-session"})
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("delete request attempt %d expected 401 (wrong OTP), got %d", i+1, rec.Code)
+		}
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/account/delete/request", bytes.NewBufferString(`{"email_otp":"000000"}`))
+	req.RemoteAddr = "203.0.113.30:12345"
+	req.AddCookie(&http.Cookie{Name: handler.SessionCookieName, Value: "valid-test-session"})
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on 4th /account/delete/request attempt, got %d", rec.Code)
 	}
 	_ = uuid.Nil
 }

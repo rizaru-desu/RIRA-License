@@ -3,6 +3,7 @@
 	import { router } from '$lib/stores/router.svelte';
 	import AuthShell from '$lib/components/layout/AuthShell.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
 	let newPassword = $state('');
 	let confirmPassword = $state('');
@@ -64,28 +65,24 @@
 				<label for="reset-pw" class="mb-1.5 block font-heading text-sm font-bold text-ink">
 					New Password
 				</label>
-				<input
+				<PasswordInput
 					id="reset-pw"
-					type="password"
 					autocomplete="new-password"
 					required
 					minlength={12}
 					bind:value={newPassword}
-					class="w-full rounded-md border-2 border-ink bg-cream px-3.5 py-2.5 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 				/>
 			</div>
 			<div>
 				<label for="reset-pw-confirm" class="mb-1.5 block font-heading text-sm font-bold text-ink">
 					Confirm Password
 				</label>
-				<input
+				<PasswordInput
 					id="reset-pw-confirm"
-					type="password"
 					autocomplete="new-password"
 					required
 					minlength={12}
 					bind:value={confirmPassword}
-					class="w-full rounded-md border-2 border-ink bg-cream px-3.5 py-2.5 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 				/>
 			</div>
 			<Button type="submit" fullWidth disabled={submitting}>
@@ -94,3 +91,4 @@
 		</form>
 	{/if}
 </AuthShell>
+

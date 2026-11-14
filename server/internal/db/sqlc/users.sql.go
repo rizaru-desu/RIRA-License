@@ -102,6 +102,26 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const deleteUserByID = `-- name: DeleteUserByID :exec
+DELETE FROM users
+WHERE id = $1
+`
+
+func (q *Queries) DeleteUserByID(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserByID, id)
+	return err
+}
+
+const deleteUserOAuthAccounts = `-- name: DeleteUserOAuthAccounts :exec
+DELETE FROM oauth_accounts
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserOAuthAccounts(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserOAuthAccounts, userID)
+	return err
+}
+
 const disableTwoFactor = `-- name: DisableTwoFactor :exec
 UPDATE users
 SET two_factor_enabled = false,
@@ -203,6 +223,38 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 	return i, err
 }
 
+const getUserByEmailIncludingDeleted = `-- name: GetUserByEmailIncludingDeleted :one
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+FROM users
+WHERE lower(email) = lower($1)
+LIMIT 1
+`
+
+func (q *Queries) GetUserByEmailIncludingDeleted(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmailIncludingDeleted, lower)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Status,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 FROM users
@@ -213,6 +265,38 @@ LIMIT 1
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 	row := q.db.QueryRow(ctx, getUserByID, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Status,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserByIDIncludingDeleted = `-- name: GetUserByIDIncludingDeleted :one
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+FROM users
+WHERE id = $1
+LIMIT 1
+`
+
+func (q *Queries) GetUserByIDIncludingDeleted(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByIDIncludingDeleted, id)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -266,6 +350,34 @@ func (q *Queries) IncrementFailedLogin(ctx context.Context, arg IncrementFailedL
 	return i, err
 }
 
+const listUsersForHardDelete = `-- name: ListUsersForHardDelete :many
+SELECT id
+FROM users
+WHERE deleted_at IS NOT NULL
+  AND deleted_at < $1
+ORDER BY deleted_at ASC
+`
+
+func (q *Queries) ListUsersForHardDelete(ctx context.Context, deletedAt *time.Time) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listUsersForHardDelete, deletedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resetLoginFailuresAndUpdateLastLogin = `-- name: ResetLoginFailuresAndUpdateLastLogin :exec
 UPDATE users
 SET failed_login_attempts = 0,
@@ -278,6 +390,42 @@ WHERE id = $1
 func (q *Queries) ResetLoginFailuresAndUpdateLastLogin(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, resetLoginFailuresAndUpdateLastLogin, id)
 	return err
+}
+
+const restoreUser = `-- name: RestoreUser :one
+UPDATE users
+SET deleted_at = NULL,
+    status = 'active',
+    failed_login_attempts = 0,
+    locked_until = NULL
+WHERE id = $1
+  AND deleted_at IS NOT NULL
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+`
+
+func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, restoreUser, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Status,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const setPendingTOTPSecret = `-- name: SetPendingTOTPSecret :exec
@@ -296,6 +444,44 @@ type SetPendingTOTPSecretParams struct {
 func (q *Queries) SetPendingTOTPSecret(ctx context.Context, arg SetPendingTOTPSecretParams) error {
 	_, err := q.db.Exec(ctx, setPendingTOTPSecret, arg.ID, arg.TotpSecretEncrypted)
 	return err
+}
+
+const softDeleteUser = `-- name: SoftDeleteUser :one
+UPDATE users
+SET deleted_at = now(),
+    status = 'suspended',
+    two_factor_enabled = false,
+    two_factor_method = NULL,
+    totp_secret_encrypted = NULL,
+    totp_verified_at = NULL
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+`
+
+func (q *Queries) SoftDeleteUser(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, softDeleteUser, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Status,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateUserAvatarIfEmpty = `-- name: UpdateUserAvatarIfEmpty :exec

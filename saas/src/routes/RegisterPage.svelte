@@ -4,6 +4,7 @@
 	import AuthShell from '$lib/components/layout/AuthShell.svelte';
 	import OAuthButtons from '$lib/components/auth/OAuthButtons.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
 	let name = $state('');
 	let email = $state('');
@@ -106,15 +107,13 @@
 				<label for="reg-password" class="mb-1.5 block font-heading text-sm font-bold text-ink">
 					Password (min 12 chars)
 				</label>
-				<input
+				<PasswordInput
 					id="reg-password"
-					type="password"
 					autocomplete="new-password"
 					required
 					minlength={12}
 					bind:value={password}
 					placeholder="At least 12 characters"
-					class="w-full rounded-md border-2 border-ink bg-cream px-3.5 py-2.5 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
 				/>
 				{#if fieldErrors.password}
 					<p class="mt-1 text-xs font-semibold text-coral-hover">{fieldErrors.password}</p>
@@ -140,3 +139,4 @@
 		</button>
 	</p>
 </AuthShell>
+

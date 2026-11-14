@@ -120,7 +120,7 @@ func (h *AuthHandler) verifyTwoFactorEndpoint(w http.ResponseWriter, r *http.Req
 	}
 
 	// Path 2: Pending login 2FA challenge via signed httpOnly cookie.
-	challengeUserID, _, valid := h.readTwoFactorChallengeCookie(r)
+	challengeUserID, _, rememberMe, valid := h.readTwoFactorChallengeCookie(r)
 	if !valid {
 		h.clearCookie(w, TwoFactorCookieName, "/api/v1/auth/2fa")
 		writeError(w, http.StatusUnauthorized, "two-factor challenge expired or missing")
@@ -151,7 +151,7 @@ func (h *AuthHandler) verifyTwoFactorEndpoint(w http.ResponseWriter, r *http.Req
 	}
 
 	h.clearCookie(w, TwoFactorCookieName, "/api/v1/auth/2fa")
-	h.setSessionCookie(w, res.SessionToken, res.SessionExpiresAt)
+	h.setSessionCookie(w, res.SessionToken, res.SessionExpiresAt, rememberMe || req.RememberDevice)
 	if res.TrustedDeviceRaw != "" {
 		h.setTrustedDeviceCookie(w, res.TrustedDeviceRaw, res.TrustedDeviceExp)
 	}
@@ -169,7 +169,7 @@ func (h *AuthHandler) SendEmailOTP(w http.ResponseWriter, r *http.Request) {
 	if user, ok := UserFromContext(r.Context()); ok {
 		targetUserID = user.ID
 	} else {
-		uid, method, valid := h.readTwoFactorChallengeCookie(r)
+		uid, method, _, valid := h.readTwoFactorChallengeCookie(r)
 		if !valid || method != auth.MethodEmail {
 			h.clearCookie(w, TwoFactorCookieName, "/api/v1/auth/2fa")
 			writeError(w, http.StatusUnauthorized, "two-factor challenge expired or missing")
@@ -283,27 +283,32 @@ func (h *AuthHandler) Providers(w http.ResponseWriter, _ *http.Request) {
 
 func (h *AuthHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	state, _, err := crypto.GenerateRandomToken(crypto.TokenBytes)
+	if provider == "callback" || (r.URL.Query().Get("state") != "" && (r.URL.Query().Get("code") != "" || r.URL.Query().Get("error") != "")) {
+		h.OAuthCallback(w, r)
+		return
+	}
+
+	nonce, _, err := crypto.GenerateRandomToken(crypto.TokenBytes)
 	if err != nil {
 		h.logger.Error("failed to generate oauth state", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	authURL, err := h.svc.AuthCodeURL(provider, state)
+	exp := time.Now().Add(time.Duration(shortCookieMaxAge) * time.Second).Unix()
+	payload := fmt.Sprintf("%s|%s|%d", provider, nonce, exp)
+	signed := crypto.SignPayload(h.cfg.SessionSecret, payload)
+
+	authURL, err := h.svc.AuthCodeURL(provider, signed)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
 	}
 
-	exp := time.Now().Add(time.Duration(shortCookieMaxAge) * time.Second).Unix()
-	payload := fmt.Sprintf("%s|%s|%d", provider, state, exp)
-	signed := crypto.SignPayload(h.cfg.SessionSecret, payload)
-
 	http.SetCookie(w, &http.Cookie{
 		Name:     OAuthStateCookieName,
 		Value:    signed,
-		Path:     "/api/v1/auth/oauth",
+		Path:     "/",
 		MaxAge:   shortCookieMaxAge,
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
@@ -314,9 +319,16 @@ func (h *AuthHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
-	defer h.clearCookie(w, OAuthStateCookieName, "/api/v1/auth/oauth")
+	defer func() {
+		h.clearCookie(w, OAuthStateCookieName, "/")
+		h.clearCookie(w, OAuthStateCookieName, "/api/v1/auth/oauth")
+	}()
 
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	provider := chi.URLParam(r, "provider")
+	if provider == "" || provider == "callback" {
+		provider = h.resolveOAuthProvider(r, state)
+	}
 	if !h.isProviderEnabled(provider) {
 		writeError(w, http.StatusNotFound, "oauth provider is not available")
 		return
@@ -328,7 +340,6 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
-	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if code == "" || state == "" {
 		writeError(w, http.StatusBadRequest, "missing oauth code or state")
 		return
@@ -349,7 +360,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setSessionCookie(w, res.SessionToken, res.SessionExpiresAt)
+	h.setSessionCookie(w, res.SessionToken, res.SessionExpiresAt, true)
 	http.Redirect(w, r, h.cfg.AppURL+"/dashboard", http.StatusFound)
 }
 
@@ -362,9 +373,9 @@ func (h *AuthHandler) isProviderEnabled(provider string) bool {
 	return false
 }
 
-func (h *AuthHandler) setTwoFactorChallengeCookie(w http.ResponseWriter, userID uuid.UUID, method string) {
+func (h *AuthHandler) setTwoFactorChallengeCookie(w http.ResponseWriter, userID uuid.UUID, method string, rememberMe bool) {
 	exp := time.Now().Add(time.Duration(shortCookieMaxAge) * time.Second).Unix()
-	payload := fmt.Sprintf("%s|%s|%d", userID.String(), method, exp)
+	payload := fmt.Sprintf("%s|%s|%t|%d", userID.String(), method, rememberMe, exp)
 	signed := crypto.SignPayload(h.cfg.SessionSecret, payload)
 
 	http.SetCookie(w, &http.Cookie{
@@ -378,49 +389,74 @@ func (h *AuthHandler) setTwoFactorChallengeCookie(w http.ResponseWriter, userID 
 	})
 }
 
-func (h *AuthHandler) readTwoFactorChallengeCookie(r *http.Request) (uuid.UUID, string, bool) {
+func (h *AuthHandler) readTwoFactorChallengeCookie(r *http.Request) (uuid.UUID, string, bool, bool) {
 	c, err := r.Cookie(TwoFactorCookieName)
 	if err != nil || c.Value == "" {
-		return uuid.Nil, "", false
+		return uuid.Nil, "", false, false
 	}
 	raw, ok := crypto.VerifyPayload(h.cfg.SessionSecret, c.Value)
 	if !ok {
-		return uuid.Nil, "", false
+		return uuid.Nil, "", false, false
 	}
 	parts := strings.Split(raw, "|")
-	if len(parts) != 3 {
-		return uuid.Nil, "", false
+	if len(parts) != 4 {
+		return uuid.Nil, "", false, false
 	}
 	uid, err := uuid.Parse(parts[0])
 	if err != nil {
-		return uuid.Nil, "", false
+		return uuid.Nil, "", false, false
 	}
-	expUnix, err := strconv.ParseInt(parts[2], 10, 64)
+	rememberMe, err := strconv.ParseBool(parts[2])
+	if err != nil {
+		return uuid.Nil, "", false, false
+	}
+	expUnix, err := strconv.ParseInt(parts[3], 10, 64)
 	if err != nil || time.Now().Unix() > expUnix {
-		return uuid.Nil, "", false
+		return uuid.Nil, "", false, false
 	}
-	return uid, parts[1], true
+	return uid, parts[1], rememberMe, true
+}
+
+func (h *AuthHandler) resolveOAuthProvider(r *http.Request, state string) string {
+	if raw, ok := crypto.VerifyPayload(h.cfg.SessionSecret, state); ok {
+		if parts := strings.Split(raw, "|"); len(parts) == 3 && parts[0] != "" {
+			return parts[0]
+		}
+	}
+	if c, err := r.Cookie(OAuthStateCookieName); err == nil && c.Value != "" {
+		if raw, ok := crypto.VerifyPayload(h.cfg.SessionSecret, c.Value); ok {
+			if parts := strings.Split(raw, "|"); len(parts) == 3 && parts[0] != "" {
+				return parts[0]
+			}
+		}
+	}
+	if enabled := h.svc.EnabledProviders(); len(enabled) == 1 {
+		return enabled[0]
+	}
+	return auth.ProviderGitHub
 }
 
 func (h *AuthHandler) validateOAuthStateCookie(r *http.Request, provider, state string) bool {
-	c, err := r.Cookie(OAuthStateCookieName)
-	if err != nil || c.Value == "" {
-		return false
+	now := time.Now().Unix()
+	if c, err := r.Cookie(OAuthStateCookieName); err == nil && c.Value != "" {
+		if raw, ok := crypto.VerifyPayload(h.cfg.SessionSecret, c.Value); ok {
+			parts := strings.Split(raw, "|")
+			if len(parts) == 3 && parts[0] == provider {
+				if expUnix, err := strconv.ParseInt(parts[2], 10, 64); err == nil && now <= expUnix {
+					if c.Value == state || parts[1] == state {
+						return true
+					}
+				}
+			}
+		}
 	}
-	raw, ok := crypto.VerifyPayload(h.cfg.SessionSecret, c.Value)
-	if !ok {
-		return false
+	if raw, ok := crypto.VerifyPayload(h.cfg.SessionSecret, state); ok {
+		parts := strings.Split(raw, "|")
+		if len(parts) == 3 && parts[0] == provider && parts[1] != "" {
+			if expUnix, err := strconv.ParseInt(parts[2], 10, 64); err == nil && now <= expUnix {
+				return true
+			}
+		}
 	}
-	parts := strings.Split(raw, "|")
-	if len(parts) != 3 {
-		return false
-	}
-	if parts[0] != provider || parts[1] != state {
-		return false
-	}
-	expUnix, err := strconv.ParseInt(parts[2], 10, 64)
-	if err != nil || time.Now().Unix() > expUnix {
-		return false
-	}
-	return true
+	return false
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { authApi } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { router } from '$lib/stores/router.svelte';
 	import LoginPage from './routes/LoginPage.svelte';
@@ -7,6 +8,8 @@
 	import ForgotPasswordPage from './routes/ForgotPasswordPage.svelte';
 	import ResetPasswordPage from './routes/ResetPasswordPage.svelte';
 	import ConfirmEmailChangePage from './routes/ConfirmEmailChangePage.svelte';
+	import ConfirmAccountDeletePage from './routes/ConfirmAccountDeletePage.svelte';
+	import RestoreAccountPage from './routes/RestoreAccountPage.svelte';
 	import DashboardPage from './routes/DashboardPage.svelte';
 	import SecuritySettingsPage from './routes/SecuritySettingsPage.svelte';
 
@@ -14,6 +17,13 @@
 	const guestOnlyRoutes = new Set(['/login', '/register', '/forgot-password']);
 
 	$effect(() => {
+		if (typeof window !== 'undefined') {
+			const params = new URLSearchParams(window.location.search);
+			if (params.has('state') && (params.has('code') || params.has('error'))) {
+				window.location.replace(authApi.oauthCallbackUrl(window.location.search));
+				return;
+			}
+		}
 		void authStore.init();
 	});
 
@@ -51,6 +61,10 @@
 	<ResetPasswordPage />
 {:else if router.pathname === '/confirm-email-change'}
 	<ConfirmEmailChangePage />
+{:else if router.pathname === '/settings/account/delete/confirm'}
+	<ConfirmAccountDeletePage />
+{:else if router.pathname === '/account/restore' || router.pathname === '/settings/account/restore'}
+	<RestoreAccountPage />
 {:else if router.pathname === '/dashboard'}
 	<DashboardPage />
 {:else if router.pathname === '/settings/security'}
@@ -58,3 +72,4 @@
 {:else}
 	<LoginPage />
 {/if}
+

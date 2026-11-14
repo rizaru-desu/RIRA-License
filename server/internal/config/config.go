@@ -13,6 +13,7 @@
 package config
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -72,8 +73,10 @@ type SMTPConfig struct {
 type OAuthConfig struct {
 	GitHubClientID     string
 	GitHubClientSecret string
+	GitHubRedirectURL  string
 	GoogleClientID     string
 	GoogleClientSecret string
+	GoogleRedirectURL  string
 }
 
 // GitHubEnabled reports whether GitHub OAuth is configured.
@@ -88,6 +91,8 @@ func (o OAuthConfig) GoogleEnabled() bool {
 
 // Load reads and validates configuration from environment variables.
 func Load() (*Config, error) {
+	loadDotEnv(".env")
+
 	port, err := envInt("APP_PORT", defaultPort)
 	if err != nil {
 		return nil, err
@@ -205,8 +210,10 @@ func Load() (*Config, error) {
 		OAuth: OAuthConfig{
 			GitHubClientID:     strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID")),
 			GitHubClientSecret: strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET")),
+			GitHubRedirectURL:  strings.TrimSpace(os.Getenv("GITHUB_REDIRECT_URL")),
 			GoogleClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
 			GoogleClientSecret: strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+			GoogleRedirectURL:  strings.TrimSpace(os.Getenv("GOOGLE_REDIRECT_URL")),
 		},
 	}, nil
 }
@@ -309,4 +316,32 @@ func parseCSV(raw string) []string {
 		}
 	}
 	return out
+}
+
+func loadDotEnv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, val)
+		}
+	}
 }

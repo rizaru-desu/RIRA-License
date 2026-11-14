@@ -12,6 +12,7 @@ import (
 )
 
 type Querier interface {
+	AnonymizeUserAuditLogs(ctx context.Context, userID uuid.NullUUID) error
 	CountAuthEventsByDay(ctx context.Context, createdAt time.Time) ([]CountAuthEventsByDayRow, error)
 	CreateBackupCode(ctx context.Context, arg CreateBackupCodeParams) error
 	CreateEmailOTPCode(ctx context.Context, arg CreateEmailOTPCodeParams) (EmailOtpCode, error)
@@ -23,8 +24,13 @@ type Querier interface {
 	DeleteSessionByID(ctx context.Context, id uuid.UUID) error
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteUserBackupCodes(ctx context.Context, userID uuid.UUID) error
+	DeleteUserByID(ctx context.Context, id uuid.UUID) error
+	DeleteUserEmailOTPs(ctx context.Context, userID uuid.UUID) error
+	DeleteUserOAuthAccounts(ctx context.Context, userID uuid.UUID) error
+	DeleteUserPasswordHistory(ctx context.Context, userID uuid.UUID) error
 	DeleteUserSessions(ctx context.Context, userID uuid.UUID) error
 	DeleteUserTrustedDevices(ctx context.Context, userID uuid.UUID) error
+	DeleteUserVerificationTokens(ctx context.Context, userID uuid.UUID) error
 	DisableTwoFactor(ctx context.Context, id uuid.UUID) error
 	EnableEmail2FA(ctx context.Context, id uuid.UUID) error
 	EnableTOTP(ctx context.Context, id uuid.UUID) error
@@ -33,7 +39,9 @@ type Querier interface {
 	GetRecentPasswordHistory(ctx context.Context, userID uuid.UUID) ([]string, error)
 	GetSessionWithUserByTokenHash(ctx context.Context, tokenHash string) (GetSessionWithUserByTokenHashRow, error)
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
+	GetUserByEmailIncludingDeleted(ctx context.Context, lower string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserByIDIncludingDeleted(ctx context.Context, id uuid.UUID) (User, error)
 	GetValidTrustedDevice(ctx context.Context, arg GetValidTrustedDeviceParams) (TrustedDevice, error)
 	GetVerificationTokenByHash(ctx context.Context, arg GetVerificationTokenByHashParams) (VerificationToken, error)
 	IncrementEmailOTPAttempts(ctx context.Context, arg IncrementEmailOTPAttemptsParams) (EmailOtpCode, error)
@@ -41,14 +49,18 @@ type Querier interface {
 	InsertAuthAuditLog(ctx context.Context, arg InsertAuthAuditLogParams) error
 	InsertPasswordHistory(ctx context.Context, arg InsertPasswordHistoryParams) error
 	InvalidateActiveEmailOTPs(ctx context.Context, userID uuid.UUID) error
+	InvalidateAllUserVerificationTokens(ctx context.Context, userID uuid.UUID) error
 	InvalidateUnusedVerificationTokens(ctx context.Context, arg InvalidateUnusedVerificationTokensParams) error
 	ListUnusedBackupCodes(ctx context.Context, userID uuid.UUID) ([]BackupCode, error)
+	ListUsersForHardDelete(ctx context.Context, deletedAt *time.Time) ([]uuid.UUID, error)
 	MarkBackupCodeUsed(ctx context.Context, id uuid.UUID) (BackupCode, error)
 	MarkEmailOTPUsed(ctx context.Context, id uuid.UUID) (EmailOtpCode, error)
 	MarkVerificationTokenUsed(ctx context.Context, id uuid.UUID) (VerificationToken, error)
 	PrunePasswordHistory(ctx context.Context, userID uuid.UUID) error
 	ResetLoginFailuresAndUpdateLastLogin(ctx context.Context, id uuid.UUID) error
+	RestoreUser(ctx context.Context, id uuid.UUID) (User, error)
 	SetPendingTOTPSecret(ctx context.Context, arg SetPendingTOTPSecretParams) error
+	SoftDeleteUser(ctx context.Context, id uuid.UUID) (User, error)
 	TouchSessionActivity(ctx context.Context, id uuid.UUID) error
 	UpdateUserAvatarIfEmpty(ctx context.Context, arg UpdateUserAvatarIfEmptyParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error

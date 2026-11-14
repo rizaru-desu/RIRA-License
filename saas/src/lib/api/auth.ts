@@ -101,10 +101,10 @@ export const authApi = {
 			body: JSON.stringify({ email })
 		});
 	},
-	login(email: string, password: string) {
+	login(email: string, password: string, rememberMe = false) {
 		return request<LoginResponse>('/api/v1/auth/login', {
 			method: 'POST',
-			body: JSON.stringify({ email, password })
+			body: JSON.stringify({ email, password, remember_me: rememberMe })
 		});
 	},
 	logout() {
@@ -181,7 +181,40 @@ export const authApi = {
 			body: JSON.stringify(body)
 		});
 	},
+	requestAccountDeletion(body: {
+		password?: string;
+		email_otp?: string;
+		code?: string;
+		backup_code?: string;
+	}) {
+		return request<{ message: string }>('/api/v1/auth/account/delete/request', {
+			method: 'POST',
+			body: JSON.stringify(body)
+		});
+	},
+	confirmAccountDeletion(token: string) {
+		return request<{ message: string }>('/api/v1/auth/account/delete/confirm', {
+			method: 'POST',
+			body: JSON.stringify({ token })
+		});
+	},
+	cancelAccountDeletion(email: string) {
+		return request<{ message: string }>('/api/v1/auth/account/delete/cancel', {
+			method: 'POST',
+			body: JSON.stringify({ email })
+		});
+	},
+	restoreAccount(token: string) {
+		return request<{ message: string }>('/api/v1/auth/account/restore', {
+			method: 'POST',
+			body: JSON.stringify({ token })
+		});
+	},
 	oauthStartUrl(provider: string) {
 		return `${API_BASE}/api/v1/auth/oauth/${encodeURIComponent(provider)}`;
+	},
+	oauthCallbackUrl(search: string) {
+		return `${API_BASE}/api/v1/auth/oauth/callback${search}`;
 	}
 };
+
