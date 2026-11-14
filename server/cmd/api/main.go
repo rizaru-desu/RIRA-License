@@ -23,24 +23,60 @@ import (
 	"syscall"
 	"time"
 
+	"riralicense/internal/auth"
 	"riralicense/internal/config"
+	"riralicense/internal/db"
 	"riralicense/internal/handler"
+	"riralicense/internal/mail"
+	"riralicense/internal/ratelimit"
 	"riralicense/internal/router"
 	"riralicense/internal/service"
 )
 
 func main() {
-	cfg := config.Load()
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
 
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("invalid configuration", "err", err)
+		os.Exit(1)
+	}
+
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
+
+	if err := db.RunMigrations(startupCtx, cfg.DatabaseURL); err != nil {
+		logger.Error("database migration failed", "err", err)
+		os.Exit(1)
+	}
+
+	pool, err := db.NewPool(startupCtx, cfg)
+	if err != nil {
+		logger.Error("database connection failed", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	mailer, err := mail.NewMailer(cfg.SMTP, cfg.Env, logger)
+	if err != nil {
+		logger.Error("mailer initialization failed", "err", err)
+		os.Exit(1)
+	}
+
+	limiters := ratelimit.NewAuthLimiters()
+	defer limiters.Stop()
+
+	store := db.NewStore(pool)
+	authSvc := auth.NewService(store, mailer, cfg, logger)
+	authHandler := handler.NewAuthHandler(authSvc, cfg, limiters, logger)
+
 	healthSvc := service.NewHealthService(cfg.Env)
 	healthHandler := handler.NewHealthHandler(healthSvc)
 
-	r := router.New(healthHandler)
+	r := router.New(cfg, healthHandler, authHandler, authSvc)
 
 	srv := &http.Server{
 		Addr:         ":" + strconv.Itoa(cfg.Port),

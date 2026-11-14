@@ -18,11 +18,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"riralicense/internal/auth"
+	"riralicense/internal/config"
 	"riralicense/internal/handler"
 )
 
 // New builds the application router with all routes wired up.
-func New(h *handler.HealthHandler) *chi.Mux {
+func New(
+	cfg *config.Config,
+	health *handler.HealthHandler,
+	authHandler *handler.AuthHandler,
+	authSvc *auth.Service,
+) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -31,11 +38,52 @@ func New(h *handler.HealthHandler) *chi.Mux {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.CleanPath)
 	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(SecurityHeaders)
+	r.Use(CORS(cfg.CORSAllowedOrigins))
 
 	// Health
-	r.Get("/", h.Liveness)
-	r.Get("/healthz", h.Liveness)
-	r.Get("/readyz", h.Readiness)
+	r.Get("/", health.Liveness)
+	r.Get("/healthz", health.Liveness)
+	r.Get("/readyz", health.Readiness)
+
+	r.Route("/api/v1/auth", func(r chi.Router) {
+		// Public endpoints
+		r.Post("/register", authHandler.Register)
+		r.Get("/verify-email", authHandler.VerifyEmail)
+		r.Post("/verify-email", authHandler.VerifyEmail)
+		r.Post("/resend-verification", authHandler.ResendVerification)
+		r.Post("/login", authHandler.Login)
+		r.Post("/forgot-password", authHandler.ForgotPassword)
+		r.Post("/reset-password", authHandler.ResetPassword)
+		r.Get("/email/confirm", authHandler.ConfirmEmailChange)
+		r.Post("/email/confirm", authHandler.ConfirmEmailChange)
+		r.Get("/providers", authHandler.Providers)
+
+		// OAuth
+		r.Get("/oauth/{provider}", authHandler.OAuthStart)
+		r.Get("/oauth/{provider}/callback", authHandler.OAuthCallback)
+
+		// Dual-mode endpoints (authenticated setup OR pending 2FA challenge cookie)
+		r.Group(func(r chi.Router) {
+			r.Use(OptionalAuth(authSvc, cfg))
+			r.Post("/logout", authHandler.Logout)
+			r.Post("/2fa/totp/verify", authHandler.VerifyTOTP)
+			r.Post("/2fa/email/send", authHandler.SendEmailOTP)
+			r.Post("/2fa/email/verify", authHandler.VerifyEmailOTP)
+		})
+
+		// Authenticated endpoints
+		r.Group(func(r chi.Router) {
+			r.Use(RequireAuth(authSvc, cfg))
+			r.Get("/me", authHandler.Me)
+			r.Post("/logout-all", authHandler.LogoutAll)
+			r.Post("/email/change", authHandler.RequestEmailChange)
+			r.Post("/password/change", authHandler.ChangePassword)
+			r.Post("/2fa/totp/setup", authHandler.SetupTOTP)
+			r.Post("/2fa/totp/disable", authHandler.DisableTOTP)
+			r.Post("/2fa/backup-codes/regenerate", authHandler.RegenerateBackupCodes)
+		})
+	})
 
 	return r
 }
