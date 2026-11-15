@@ -78,7 +78,7 @@ func NewAuthHandler(
 
 type registerRequest struct {
 	Email    string `json:"email" validate:"required,email,max=254"`
-	Password string `json:"password" validate:"required,min=12,max=128"`
+	Password string `json:"password" validate:"required,minpassword,max=128"`
 	Name     string `json:"name" validate:"required,min=1,max=120"`
 }
 
@@ -98,12 +98,12 @@ type loginRequest struct {
 
 type resetPasswordRequest struct {
 	Token       string `json:"token" validate:"required,min=10,max=256"`
-	NewPassword string `json:"new_password" validate:"required,min=12,max=128"`
+	NewPassword string `json:"new_password" validate:"required,minpassword,max=128"`
 }
 
 type changePasswordRequest struct {
 	CurrentPassword string `json:"current_password" validate:"max=128"`
-	NewPassword     string `json:"new_password" validate:"required,min=12,max=128"`
+	NewPassword     string `json:"new_password" validate:"required,minpassword,max=128"`
 }
 
 type changeEmailRequest struct {
@@ -466,7 +466,7 @@ func (h *AuthHandler) handleServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, auth.ErrInvalidToken):
 		writeError(w, http.StatusBadRequest, "invalid or expired token")
 	case errors.Is(err, auth.ErrPasswordTooShort):
-		writeError(w, http.StatusBadRequest, "password must be at least 12 characters")
+		writeError(w, http.StatusBadRequest, auth.ErrPasswordTooShort.Error())
 	case errors.Is(err, auth.ErrPasswordReused):
 		writeError(w, http.StatusBadRequest, "new password cannot match any of your last 5 passwords")
 	case errors.Is(err, auth.ErrConflictEmail):

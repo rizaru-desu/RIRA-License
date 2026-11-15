@@ -3,6 +3,7 @@
 	import { router } from '$lib/stores/router.svelte';
 	import AuthShell from '$lib/components/layout/AuthShell.svelte';
 	import OAuthButtons from '$lib/components/auth/OAuthButtons.svelte';
+	import PasswordMeter, { MIN_PASSWORD_LENGTH } from '$lib/components/PasswordMeter.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
@@ -20,8 +21,8 @@
 		fieldErrors = {};
 		successMsg = '';
 
-		if (password.length < 12) {
-			fieldErrors = { password: 'password must be at least 12 characters' };
+		if (password.length < MIN_PASSWORD_LENGTH) {
+			fieldErrors = { password: 'password must be at least 6 characters' };
 			return;
 		}
 
@@ -45,7 +46,7 @@
 
 <AuthShell
 	title="Create your account"
-	subtitle="Minimum 12-character password. Email verification required."
+	subtitle="Min 6 chars, 12+ recommended. Email verification required."
 >
 	{#if errorMsg}
 		<div
@@ -105,22 +106,23 @@
 
 			<div>
 				<label for="reg-password" class="mb-1.5 block font-heading text-sm font-bold text-ink">
-					Password (min 12 chars)
+					Password (min 6 chars, 12+ recommended)
 				</label>
 				<PasswordInput
 					id="reg-password"
 					autocomplete="new-password"
 					required
-					minlength={12}
+					minlength={MIN_PASSWORD_LENGTH}
 					bind:value={password}
-					placeholder="At least 12 characters"
+					placeholder="Min 6 chars, 12+ recommended"
 				/>
+				<PasswordMeter {password} />
 				{#if fieldErrors.password}
 					<p class="mt-1 text-xs font-semibold text-coral-hover">{fieldErrors.password}</p>
 				{/if}
 			</div>
 
-			<Button type="submit" fullWidth disabled={submitting}>
+			<Button type="submit" fullWidth disabled={submitting || password.length < MIN_PASSWORD_LENGTH}>
 				{submitting ? 'Creating account...' : 'Create Account'}
 			</Button>
 		</form>

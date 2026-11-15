@@ -24,12 +24,12 @@ import (
 )
 
 const (
-	Argon2Time     uint32 = 3
-	Argon2Memory   uint32 = 64 * 1024 // 64 MiB in KiB
-	Argon2Threads  uint8  = 4
-	Argon2KeyLen   uint32 = 32
-	Argon2SaltLen         = 16
-	MinPasswordLen        = 12
+	Argon2Time        uint32 = 3
+	Argon2Memory      uint32 = 64 * 1024 // 64 MiB in KiB
+	Argon2Threads     uint8  = 4
+	Argon2KeyLen      uint32 = 32
+	Argon2SaltLen            = 16
+	MinPasswordLength        = 6
 )
 
 // DummyArgon2Hash is a valid PHC Argon2id hash used for constant-time fallback

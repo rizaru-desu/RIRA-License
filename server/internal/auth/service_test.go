@@ -1037,6 +1037,54 @@ func TestTOTPBackupCodesTrustedDeviceAndLockout(t *testing.T) {
 	}
 }
 
+func TestPasswordMinLength5Rejected6AcceptedAndHistoryReuse(t *testing.T) {
+	svc, _, mailer, _ := newTestService(t)
+	ctx := context.Background()
+
+	// 1. Register: 5 chars rejected, 6 chars accepted.
+	if _, err := svc.Register(ctx, "min6@example.com", "12345", "Min Six", testMeta()); !errors.Is(err, ErrPasswordTooShort) {
+		t.Fatalf("expected 5-char password rejected with ErrPasswordTooShort, got %v", err)
+	}
+	if ErrPasswordTooShort.Error() != "password must be at least 6 characters" {
+		t.Fatalf("unexpected ErrPasswordTooShort message: %q", ErrPasswordTooShort.Error())
+	}
+
+	user, err := svc.Register(ctx, "min6@example.com", "abc123", "Min Six", testMeta())
+	if err != nil {
+		t.Fatalf("expected 6-char password accepted on Register, got %v", err)
+	}
+	if err := svc.VerifyEmail(ctx, mailer.lastToken(), testMeta()); err != nil {
+		t.Fatalf("VerifyEmail failed: %v", err)
+	}
+
+	// 2. ChangePassword: 5 chars rejected, 6 chars accepted, history check blocks reuse.
+	if err := svc.ChangePassword(ctx, user.ID, "abc123", "12345", testMeta()); !errors.Is(err, ErrPasswordTooShort) {
+		t.Fatalf("expected 5-char new password rejected on ChangePassword, got %v", err)
+	}
+	if err := svc.ChangePassword(ctx, user.ID, "abc123", "def456", testMeta()); err != nil {
+		t.Fatalf("expected 6-char new password accepted on ChangePassword, got %v", err)
+	}
+	if err := svc.ChangePassword(ctx, user.ID, "def456", "abc123", testMeta()); !errors.Is(err, ErrPasswordReused) {
+		t.Fatalf("expected password history check to block reuse of 6-char password, got %v", err)
+	}
+
+	// 3. ResetPassword: 5 chars rejected, history reuse blocked, 6 chars accepted.
+	if err := svc.ForgotPassword(ctx, "min6@example.com", testMeta()); err != nil {
+		t.Fatalf("ForgotPassword failed: %v", err)
+	}
+	resetTok := mailer.lastToken()
+
+	if err := svc.ResetPassword(ctx, resetTok, "12345", testMeta()); !errors.Is(err, ErrPasswordTooShort) {
+		t.Fatalf("expected 5-char password rejected on ResetPassword, got %v", err)
+	}
+	if err := svc.ResetPassword(ctx, resetTok, "abc123", testMeta()); !errors.Is(err, ErrPasswordReused) {
+		t.Fatalf("expected password history check to block reuse on ResetPassword, got %v", err)
+	}
+	if err := svc.ResetPassword(ctx, resetTok, "ghi789", testMeta()); err != nil {
+		t.Fatalf("expected 6-char password accepted on ResetPassword, got %v", err)
+	}
+}
+
 func TestPasswordHistoryLast5AndRevocation(t *testing.T) {
 	svc, store, mailer, _ := newTestService(t)
 	ctx := context.Background()

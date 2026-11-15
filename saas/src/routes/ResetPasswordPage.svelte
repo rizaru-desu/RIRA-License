@@ -2,6 +2,7 @@
 	import { ApiError, authApi } from '$lib/api/auth';
 	import { router } from '$lib/stores/router.svelte';
 	import AuthShell from '$lib/components/layout/AuthShell.svelte';
+	import PasswordMeter, { MIN_PASSWORD_LENGTH } from '$lib/components/PasswordMeter.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
@@ -10,6 +11,9 @@
 	let submitting = $state(false);
 	let errorMsg = $state('');
 	let successMsg = $state('');
+	const passwordMismatch = $derived(
+		confirmPassword.length > 0 && confirmPassword !== newPassword
+	);
 
 	async function handleReset(e: SubmitEvent) {
 		e.preventDefault();
@@ -19,8 +23,8 @@
 			errorMsg = 'Missing password reset token.';
 			return;
 		}
-		if (newPassword.length < 12) {
-			errorMsg = 'Password must be at least 12 characters.';
+		if (newPassword.length < MIN_PASSWORD_LENGTH) {
+			errorMsg = 'Password must be at least 6 characters.';
 			return;
 		}
 		if (newPassword !== confirmPassword) {
@@ -42,7 +46,10 @@
 	}
 </script>
 
-<AuthShell title="Choose a new password" subtitle="Must be at least 12 characters and not match your last 5 passwords.">
+<AuthShell
+	title="Choose a new password"
+	subtitle="Min 6 chars, 12+ recommended. Cannot match your last 5 passwords."
+>
 	{#if errorMsg}
 		<div
 			role="alert"
@@ -63,15 +70,16 @@
 		<form onsubmit={handleReset} class="space-y-4">
 			<div>
 				<label for="reset-pw" class="mb-1.5 block font-heading text-sm font-bold text-ink">
-					New Password
+					New Password (min 6 chars, 12+ recommended)
 				</label>
 				<PasswordInput
 					id="reset-pw"
 					autocomplete="new-password"
 					required
-					minlength={12}
+					minlength={MIN_PASSWORD_LENGTH}
 					bind:value={newPassword}
 				/>
+				<PasswordMeter password={newPassword} />
 			</div>
 			<div>
 				<label for="reset-pw-confirm" class="mb-1.5 block font-heading text-sm font-bold text-ink">
@@ -81,11 +89,20 @@
 					id="reset-pw-confirm"
 					autocomplete="new-password"
 					required
-					minlength={12}
+					minlength={MIN_PASSWORD_LENGTH}
 					bind:value={confirmPassword}
 				/>
+				{#if passwordMismatch}
+					<p role="alert" class="mt-1 text-xs font-semibold text-coral-hover">
+						Passwords do not match.
+					</p>
+				{/if}
 			</div>
-			<Button type="submit" fullWidth disabled={submitting}>
+			<Button
+				type="submit"
+				fullWidth
+				disabled={submitting || newPassword.length < MIN_PASSWORD_LENGTH || passwordMismatch}
+			>
 				{submitting ? 'Updating...' : 'Reset Password'}
 			</Button>
 		</form>

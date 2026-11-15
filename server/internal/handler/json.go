@@ -27,6 +27,7 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"riralicense/internal/auth"
+	"riralicense/internal/crypto"
 )
 
 const maxJSONBodyBytes = 1 << 20 // 1 MiB
@@ -39,6 +40,9 @@ func newValidator() *validator.Validate {
 			return fld.Name
 		}
 		return name
+	})
+	_ = v.RegisterValidation("minpassword", func(fl validator.FieldLevel) bool {
+		return len(fl.Field().String()) >= crypto.MinPasswordLength
 	})
 	return v
 }
@@ -76,6 +80,8 @@ func formatValidationError(fe validator.FieldError) string {
 		return fe.Field() + " is required"
 	case "email":
 		return fe.Field() + " must be a valid email address"
+	case "minpassword":
+		return auth.ErrPasswordTooShort.Error()
 	case "min":
 		return fe.Field() + " must be at least " + fe.Param() + " characters"
 	case "max":
@@ -97,8 +103,16 @@ func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
 }
 
 func writeValidationError(w http.ResponseWriter, fields map[string]string) {
+	errMsg := "validation failed"
+	if len(fields) == 1 {
+		for _, msg := range fields {
+			if msg == auth.ErrPasswordTooShort.Error() {
+				errMsg = msg
+			}
+		}
+	}
 	writeJSON(w, http.StatusBadRequest, map[string]any{
-		"error":  "validation failed",
+		"error":  errMsg,
 		"fields": fields,
 	})
 }

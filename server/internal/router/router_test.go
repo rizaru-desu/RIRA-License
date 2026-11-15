@@ -88,6 +88,26 @@ func (n *noopStore) GetSessionWithUserByTokenHash(_ context.Context, tokenHash s
 func (n *noopStore) DeleteSessionByTokenHash(_ context.Context, _ string) error {
 	return nil
 }
+func (n *noopStore) CreateUser(_ context.Context, arg sqlc.CreateUserParams) (sqlc.User, error) {
+	return sqlc.User{
+		ID:     uuid.New(),
+		Email:  arg.Lower,
+		Name:   arg.Name,
+		Status: "active",
+	}, nil
+}
+func (n *noopStore) InsertPasswordHistory(_ context.Context, _ sqlc.InsertPasswordHistoryParams) error {
+	return nil
+}
+func (n *noopStore) CreateVerificationToken(_ context.Context, arg sqlc.CreateVerificationTokenParams) (sqlc.VerificationToken, error) {
+	return sqlc.VerificationToken{
+		ID:        uuid.New(),
+		UserID:    arg.UserID,
+		Type:      arg.Type,
+		TokenHash: arg.TokenHash,
+		ExpiresAt: arg.ExpiresAt,
+	}, nil
+}
 
 func TestRouterValidationRateLimitAndDisabledOAuth(t *testing.T) {
 	cfg := &config.Config{
@@ -143,6 +163,61 @@ func TestRouterValidationRateLimitAndDisabledOAuth(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid register payload, got %d", rec.Code)
+	}
+
+	// 3b. Password minimum length across register, change-password, and reset-password:
+	// 5 chars rejected with "password must be at least 6 characters", 6 chars accepted on register.
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewBufferString(`{"email":"five@example.com","password":"12345","name":"Five"}`))
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for 5-char register password, got %d", rec.Code)
+	}
+	var errResp struct {
+		Error  string            `json:"error"`
+		Fields map[string]string `json:"fields"`
+	}
+	_ = json.NewDecoder(rec.Body).Decode(&errResp)
+	if errResp.Error != "password must be at least 6 characters" || errResp.Fields["password"] != "password must be at least 6 characters" {
+		t.Fatalf("unexpected 5-char register error response: %+v", errResp)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewBufferString(`{"email":"six@example.com","password":"abc123","name":"Six"}`))
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for 6-char register password, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/password/change", bytes.NewBufferString(`{"current_password":"oldpassword","new_password":"12345"}`))
+	req.AddCookie(&http.Cookie{Name: handler.SessionCookieName, Value: "valid-test-session"})
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for 5-char change-password, got %d", rec.Code)
+	}
+	errResp = struct {
+		Error  string            `json:"error"`
+		Fields map[string]string `json:"fields"`
+	}{}
+	_ = json.NewDecoder(rec.Body).Decode(&errResp)
+	if errResp.Error != "password must be at least 6 characters" || errResp.Fields["new_password"] != "password must be at least 6 characters" {
+		t.Fatalf("unexpected 5-char change-password error response: %+v", errResp)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/reset-password", bytes.NewBufferString(`{"token":"valid-length-reset-token","new_password":"12345"}`))
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for 5-char reset-password, got %d", rec.Code)
+	}
+	errResp = struct {
+		Error  string            `json:"error"`
+		Fields map[string]string `json:"fields"`
+	}{}
+	_ = json.NewDecoder(rec.Body).Decode(&errResp)
+	if errResp.Error != "password must be at least 6 characters" || errResp.Fields["new_password"] != "password must be at least 6 characters" {
+		t.Fatalf("unexpected 5-char reset-password error response: %+v", errResp)
 	}
 
 	// 4. Forgot password returns identical 200 and enforces 3/hr rate limit with Retry-After.

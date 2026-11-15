@@ -52,7 +52,7 @@ var (
 	ErrEmailNotVerified        = errors.New("email address is not verified")
 	ErrInvalidToken            = errors.New("invalid or expired token")
 	ErrPasswordReused          = errors.New("new password cannot match any of your last 5 passwords")
-	ErrPasswordTooShort        = errors.New("password must be at least 12 characters")
+	ErrPasswordTooShort        = errors.New("password must be at least 6 characters")
 	ErrConflictEmail           = errors.New("an account with this email already exists")
 	ErrUnauthorized            = errors.New("unauthorized")
 	ErrTwoFactorAlreadyEnabled = errors.New("two-factor authentication is already enabled")

@@ -29,7 +29,7 @@ import (
 func (s *Service) Register(ctx context.Context, email, password, name string, meta RequestMeta) (*UserDTO, error) {
 	email = normalizeEmail(email)
 	name = strings.TrimSpace(name)
-	if len(password) < crypto.MinPasswordLen {
+	if len(password) < crypto.MinPasswordLength {
 		return nil, ErrPasswordTooShort
 	}
 

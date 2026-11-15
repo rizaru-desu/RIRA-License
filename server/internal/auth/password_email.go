@@ -78,7 +78,7 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	if rawToken == "" {
 		return ErrInvalidToken
 	}
-	if len(newPassword) < crypto.MinPasswordLen {
+	if len(newPassword) < crypto.MinPasswordLength {
 		return ErrPasswordTooShort
 	}
 
@@ -113,7 +113,7 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 // ChangePassword verifies currentPassword (when set), enforces password history,
 // updates the password, and revokes all sessions and trusted devices.
 func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string, meta RequestMeta) error {
-	if len(newPassword) < crypto.MinPasswordLen {
+	if len(newPassword) < crypto.MinPasswordLength {
 		return ErrPasswordTooShort
 	}
 

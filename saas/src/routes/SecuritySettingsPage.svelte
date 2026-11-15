@@ -5,6 +5,7 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { router } from '$lib/stores/router.svelte';
 	import AppShell from '$lib/components/layout/AppShell.svelte';
+	import PasswordMeter, { MIN_PASSWORD_LENGTH } from '$lib/components/PasswordMeter.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -43,7 +44,11 @@
 	// Change password state
 	let currentPassword = $state('');
 	let newPassword = $state('');
+	let confirmNewPassword = $state('');
 	let passwordLoading = $state(false);
+	const passwordMismatch = $derived(
+		confirmNewPassword.length > 0 && confirmNewPassword !== newPassword
+	);
 
 	// Change email state
 	let newEmail = $state('');
@@ -196,13 +201,20 @@
 		e.preventDefault();
 		errorMsg = '';
 		successMsg = '';
-		if (newPassword.length < 12) {
-			errorMsg = 'New password must be at least 12 characters.';
+		if (newPassword.length < MIN_PASSWORD_LENGTH) {
+			errorMsg = 'Password must be at least 6 characters.';
+			return;
+		}
+		if (newPassword !== confirmNewPassword) {
+			errorMsg = 'Passwords do not match.';
 			return;
 		}
 		passwordLoading = true;
 		try {
 			await authApi.changePassword(currentPassword, newPassword);
+			currentPassword = '';
+			newPassword = '';
+			confirmNewPassword = '';
 			authStore.setUser(null);
 			router.navigate('/login', true);
 		} catch (err) {
@@ -564,16 +576,41 @@
 						{/if}
 						<div>
 							<label for="new-pw" class="mb-1 block font-heading text-xs font-bold uppercase text-ink">
-								New Password (min 12 chars)
+								New Password (min 6 chars, 12+ recommended)
 							</label>
 							<PasswordInput
 								id="new-pw"
+								autocomplete="new-password"
 								required
-								minlength={12}
+								minlength={MIN_PASSWORD_LENGTH}
 								bind:value={newPassword}
 							/>
+							<PasswordMeter password={newPassword} />
 						</div>
-						<Button type="submit" disabled={passwordLoading}>
+						<div>
+							<label
+								for="confirm-new-pw"
+								class="mb-1 block font-heading text-xs font-bold uppercase text-ink"
+							>
+								Confirm New Password
+							</label>
+							<PasswordInput
+								id="confirm-new-pw"
+								autocomplete="new-password"
+								required
+								minlength={MIN_PASSWORD_LENGTH}
+								bind:value={confirmNewPassword}
+							/>
+							{#if passwordMismatch}
+								<p role="alert" class="mt-1 text-xs font-semibold text-coral-hover">
+									Passwords do not match.
+								</p>
+							{/if}
+						</div>
+						<Button
+							type="submit"
+							disabled={passwordLoading || newPassword.length < MIN_PASSWORD_LENGTH || passwordMismatch}
+						>
 							{passwordLoading ? 'Updating...' : 'Update Password'}
 						</Button>
 					</form>
