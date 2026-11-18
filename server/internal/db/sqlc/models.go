@@ -13,13 +13,15 @@ import (
 )
 
 type AuthAuditLog struct {
-	ID        int64         `json:"id"`
-	UserID    uuid.NullUUID `json:"user_id"`
-	Event     string        `json:"event"`
-	IpAddress *netip.Addr   `json:"ip_address"`
-	UserAgent pgtype.Text   `json:"user_agent"`
-	Metadata  []byte        `json:"metadata"`
-	CreatedAt time.Time     `json:"created_at"`
+	ID          int64         `json:"id"`
+	UserID      uuid.NullUUID `json:"user_id"`
+	WorkspaceID uuid.NullUUID `json:"workspace_id"`
+	ActorUserID uuid.NullUUID `json:"actor_user_id"`
+	Event       string        `json:"event"`
+	IpAddress   *netip.Addr   `json:"ip_address"`
+	UserAgent   pgtype.Text   `json:"user_agent"`
+	Metadata    []byte        `json:"metadata"`
+	CreatedAt   time.Time     `json:"created_at"`
 }
 
 type BackupCode struct {
@@ -56,14 +58,15 @@ type PasswordHistory struct {
 }
 
 type Session struct {
-	ID             uuid.UUID   `json:"id"`
-	UserID         uuid.UUID   `json:"user_id"`
-	TokenHash      string      `json:"token_hash"`
-	UserAgent      pgtype.Text `json:"user_agent"`
-	IpAddress      *netip.Addr `json:"ip_address"`
-	ExpiresAt      time.Time   `json:"expires_at"`
-	LastActivityAt time.Time   `json:"last_activity_at"`
-	CreatedAt      time.Time   `json:"created_at"`
+	ID                uuid.UUID     `json:"id"`
+	UserID            uuid.UUID     `json:"user_id"`
+	ActiveWorkspaceID uuid.NullUUID `json:"active_workspace_id"`
+	TokenHash         string        `json:"token_hash"`
+	UserAgent         pgtype.Text   `json:"user_agent"`
+	IpAddress         *netip.Addr   `json:"ip_address"`
+	ExpiresAt         time.Time     `json:"expires_at"`
+	LastActivityAt    time.Time     `json:"last_activity_at"`
+	CreatedAt         time.Time     `json:"created_at"`
 }
 
 type TrustedDevice struct {
@@ -83,7 +86,11 @@ type User struct {
 	Name                string      `json:"name"`
 	AvatarUrl           pgtype.Text `json:"avatar_url"`
 	EmailVerifiedAt     *time.Time  `json:"email_verified_at"`
+	Role                string      `json:"role"`
+	IsSuperadmin        bool        `json:"is_superadmin"`
 	Status              string      `json:"status"`
+	SuspendedReason     pgtype.Text `json:"suspended_reason"`
+	SuspendedAt         *time.Time  `json:"suspended_at"`
 	DeletedAt           *time.Time  `json:"deleted_at"`
 	TwoFactorEnabled    bool        `json:"two_factor_enabled"`
 	TwoFactorMethod     pgtype.Text `json:"two_factor_method"`
@@ -105,4 +112,42 @@ type VerificationToken struct {
 	ExpiresAt time.Time   `json:"expires_at"`
 	UsedAt    *time.Time  `json:"used_at"`
 	CreatedAt time.Time   `json:"created_at"`
+}
+
+type Workspace struct {
+	ID                  uuid.UUID     `json:"id"`
+	Name                string        `json:"name"`
+	Slug                string        `json:"slug"`
+	Plan                string        `json:"plan"`
+	Status              string        `json:"status"`
+	SuspendedReason     pgtype.Text   `json:"suspended_reason"`
+	SuspendedAt         *time.Time    `json:"suspended_at"`
+	SuspendedBy         uuid.NullUUID `json:"suspended_by"`
+	MaxUsersOverride    pgtype.Int4   `json:"max_users_override"`
+	MaxProductsOverride pgtype.Int4   `json:"max_products_override"`
+	MaxLicensesOverride pgtype.Int4   `json:"max_licenses_override"`
+	OverrideExpiresAt   *time.Time    `json:"override_expires_at"`
+	OverrideNote        pgtype.Text   `json:"override_note"`
+	CreatedBy           uuid.NullUUID `json:"created_by"`
+	DeletedAt           *time.Time    `json:"deleted_at"`
+	CreatedAt           time.Time     `json:"created_at"`
+	UpdatedAt           time.Time     `json:"updated_at"`
+}
+
+type WorkspaceMember struct {
+	ID              uuid.UUID     `json:"id"`
+	WorkspaceID     uuid.UUID     `json:"workspace_id"`
+	UserID          uuid.UUID     `json:"user_id"`
+	Role            string        `json:"role"`
+	Status          string        `json:"status"`
+	SuspendedReason pgtype.Text   `json:"suspended_reason"`
+	SuspendedAt     *time.Time    `json:"suspended_at"`
+	SuspendedBy     uuid.NullUUID `json:"suspended_by"`
+	RemovedAt       *time.Time    `json:"removed_at"`
+	RemovedBy       uuid.NullUUID `json:"removed_by"`
+	RemovalReason   pgtype.Text   `json:"removal_reason"`
+	InvitedBy       uuid.NullUUID `json:"invited_by"`
+	JoinedAt        time.Time     `json:"joined_at"`
+	CreatedAt       time.Time     `json:"created_at"`
+	UpdatedAt       time.Time     `json:"updated_at"`
 }

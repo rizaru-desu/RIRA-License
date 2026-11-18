@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,11 +38,16 @@ type Service struct {
 	mailer         mail.Mailer
 	logger         *slog.Logger
 	appURL         string
+	uploadDir      string
 	totpKey        []byte
 	oauthCfg       config.OAuthConfig
 	oauthEndpoints OAuthEndpoints
 	httpClient     *http.Client
 	now            func() time.Time
+	plan           string
+	limitsMu       sync.Mutex
+	productCounts  map[uuid.UUID]int
+	licenseCounts  map[uuid.UUID]int
 }
 
 // NewService constructs a fully configured auth Service.
@@ -51,17 +57,46 @@ func NewService(
 	cfg *config.Config,
 	logger *slog.Logger,
 ) *Service {
+	uploadDir := strings.TrimSpace(cfg.UploadDir)
+	if uploadDir == "" {
+		uploadDir = config.DefaultUploadDir()
+	}
 	return &Service{
 		store:          store,
 		mailer:         mailer,
 		logger:         logger,
 		appURL:         strings.TrimRight(cfg.AppURL, "/"),
+		uploadDir:      uploadDir,
 		totpKey:        cfg.TOTPEncryptionKey,
 		oauthCfg:       cfg.OAuth,
 		oauthEndpoints: defaultOAuthEndpoints(),
 		httpClient:     &http.Client{Timeout: 10 * time.Second},
 		now:            time.Now,
+		plan:           FreePlan,
+		productCounts:  make(map[uuid.UUID]int),
+		licenseCounts:  make(map[uuid.UUID]int),
 	}
+}
+
+// Plan returns the current workspace plan identifier.
+func (s *Service) Plan() string {
+	if s.plan == "" {
+		return FreePlan
+	}
+	return s.plan
+}
+
+// MaxUsers returns the seat limit for the current workspace plan.
+func (s *Service) MaxUsers() int {
+	if s.Plan() == FreePlan {
+		return FreeMaxUsers
+	}
+	return 0
+}
+
+// UploadDir returns the base directory where uploaded files are stored.
+func (s *Service) UploadDir() string {
+	return s.uploadDir
 }
 
 // ValidateSession verifies a raw session cookie token against absolute (30d)
@@ -79,7 +114,7 @@ func (s *Service) ValidateSession(ctx context.Context, rawToken string) (*UserDT
 		return nil, uuid.Nil, err
 	}
 
-	if row.Status == "suspended" {
+	if row.Status != "active" {
 		_ = s.store.Queries().DeleteUserSessions(ctx, row.ID)
 		return nil, uuid.Nil, ErrUnauthorized
 	}
@@ -132,7 +167,7 @@ func (s *Service) createSession(ctx context.Context, q sqlc.Querier, userID uuid
 		return "", time.Time{}, err
 	}
 	expiresAt := s.now().Add(SessionAbsoluteTTL)
-	_, err = q.CreateSession(ctx, sqlc.CreateSessionParams{
+	sess, err := q.CreateSession(ctx, sqlc.CreateSessionParams{
 		UserID:    userID,
 		TokenHash: tokenHash,
 		UserAgent: pgText(meta.UserAgent),
@@ -141,6 +176,14 @@ func (s *Service) createSession(ctx context.Context, q sqlc.Querier, userID uuid
 	})
 	if err != nil {
 		return "", time.Time{}, err
+	}
+	if u, uErr := q.GetUserByID(ctx, userID); uErr == nil && !u.IsSuperadmin {
+		if wss, wsErr := q.ListWorkspacesForUser(ctx, userID); wsErr == nil && len(wss) > 0 {
+			_ = q.SetSessionActiveWorkspace(ctx, sqlc.SetSessionActiveWorkspaceParams{
+				ID:                sess.ID,
+				ActiveWorkspaceID: uuid.NullUUID{UUID: wss[0].ID, Valid: true},
+			})
+		}
 	}
 	return rawToken, expiresAt, nil
 }
@@ -181,6 +224,35 @@ func (s *Service) writeAudit(ctx context.Context, userID uuid.NullUUID, event st
 	}
 }
 
+func (s *Service) writeWorkspaceAudit(
+	ctx context.Context,
+	userID uuid.NullUUID,
+	workspaceID uuid.NullUUID,
+	actorUserID uuid.NullUUID,
+	event string,
+	meta RequestMeta,
+	metadata any,
+) {
+	var rawJSON []byte
+	if metadata != nil {
+		encoded, err := json.Marshal(metadata)
+		if err == nil {
+			rawJSON = encoded
+		}
+	}
+	if err := s.store.Queries().InsertWorkspaceAuditLog(ctx, sqlc.InsertWorkspaceAuditLogParams{
+		UserID:      userID,
+		WorkspaceID: workspaceID,
+		ActorUserID: actorUserID,
+		Event:       event,
+		IpAddress:   meta.IP,
+		UserAgent:   pgText(meta.UserAgent),
+		Metadata:    rawJSON,
+	}); err != nil {
+		s.logger.Warn("failed to write workspace audit log", "event", event, "err", err)
+	}
+}
+
 func pgText(v string) pgtype.Text {
 	if v == "" {
 		return pgtype.Text{}
@@ -192,10 +264,17 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+func normalizeRole(role string) string {
+	if IsValidRole(role) {
+		return role
+	}
+	return RoleMember
+}
+
 func userToDTO(u sqlc.User) UserDTO {
 	var avatar *string
 	if u.AvatarUrl.Valid {
-		v := u.AvatarUrl.String
+		v := normalizeAvatarRelativePath(u.AvatarUrl.String)
 		avatar = &v
 	}
 	var method *string
@@ -203,13 +282,24 @@ func userToDTO(u sqlc.User) UserDTO {
 		v := u.TwoFactorMethod.String
 		method = &v
 	}
+	var suspendedReason *string
+	if u.SuspendedReason.Valid {
+		v := u.SuspendedReason.String
+		suspendedReason = &v
+	}
+	role := normalizeRole(u.Role)
 	return UserDTO{
 		ID:               u.ID,
 		Email:            u.Email,
 		Name:             u.Name,
 		AvatarURL:        avatar,
 		EmailVerifiedAt:  u.EmailVerifiedAt,
+		Role:             role,
+		IsSuperadmin:     u.IsSuperadmin,
+		Permissions:      PermissionsFor(role, u.IsSuperadmin),
 		Status:           u.Status,
+		SuspendedReason:  suspendedReason,
+		SuspendedAt:      u.SuspendedAt,
 		TwoFactorEnabled: u.TwoFactorEnabled,
 		TwoFactorMethod:  method,
 		HasPassword:      u.PasswordHash.Valid,
@@ -221,7 +311,7 @@ func userToDTO(u sqlc.User) UserDTO {
 func sessionRowToUserDTO(r sqlc.GetSessionWithUserByTokenHashRow) UserDTO {
 	var avatar *string
 	if r.AvatarUrl.Valid {
-		v := r.AvatarUrl.String
+		v := normalizeAvatarRelativePath(r.AvatarUrl.String)
 		avatar = &v
 	}
 	var method *string
@@ -229,17 +319,60 @@ func sessionRowToUserDTO(r sqlc.GetSessionWithUserByTokenHashRow) UserDTO {
 		v := r.TwoFactorMethod.String
 		method = &v
 	}
+	var suspendedReason *string
+	if r.SuspendedReason.Valid {
+		v := r.SuspendedReason.String
+		suspendedReason = &v
+	}
+	var activeWorkspaceID *uuid.UUID
+	if r.SessionActiveWorkspaceID.Valid {
+		id := r.SessionActiveWorkspaceID.UUID
+		activeWorkspaceID = &id
+	}
+	role := normalizeRole(r.Role)
 	return UserDTO{
-		ID:               r.ID,
-		Email:            r.Email,
-		Name:             r.Name,
-		AvatarURL:        avatar,
-		EmailVerifiedAt:  r.EmailVerifiedAt,
-		Status:           r.Status,
-		TwoFactorEnabled: r.TwoFactorEnabled,
-		TwoFactorMethod:  method,
-		HasPassword:      r.PasswordHash.Valid,
-		LastLoginAt:      r.LastLoginAt,
-		CreatedAt:        r.CreatedAt,
+		ID:                r.ID,
+		Email:             r.Email,
+		Name:              r.Name,
+		AvatarURL:         avatar,
+		EmailVerifiedAt:   r.EmailVerifiedAt,
+		Role:              role,
+		IsSuperadmin:      r.IsSuperadmin,
+		Permissions:       PermissionsFor(role, r.IsSuperadmin),
+		Status:            r.Status,
+		SuspendedReason:   suspendedReason,
+		SuspendedAt:       r.SuspendedAt,
+		ActiveWorkspaceID: activeWorkspaceID,
+		TwoFactorEnabled:  r.TwoFactorEnabled,
+		TwoFactorMethod:   method,
+		HasPassword:       r.PasswordHash.Valid,
+		LastLoginAt:       r.LastLoginAt,
+		CreatedAt:         r.CreatedAt,
+	}
+}
+
+func userToAdminDTO(u sqlc.User) AdminUserDTO {
+	var avatar *string
+	if u.AvatarUrl.Valid {
+		v := normalizeAvatarRelativePath(u.AvatarUrl.String)
+		avatar = &v
+	}
+	var suspendedReason *string
+	if u.SuspendedReason.Valid {
+		v := u.SuspendedReason.String
+		suspendedReason = &v
+	}
+	return AdminUserDTO{
+		ID:              u.ID,
+		Name:            u.Name,
+		Email:           u.Email,
+		AvatarURL:       avatar,
+		Role:            normalizeRole(u.Role),
+		IsSuperadmin:    u.IsSuperadmin,
+		Status:          u.Status,
+		SuspendedReason: suspendedReason,
+		SuspendedAt:     u.SuspendedAt,
+		EmailVerifiedAt: u.EmailVerifiedAt,
+		CreatedAt:       u.CreatedAt,
 	}
 }

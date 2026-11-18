@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ type Config struct {
 	TOTPEncryptionKey  []byte
 	CookieSecure       bool
 	CORSAllowedOrigins []string
+	UploadDir          string
 	SMTP               SMTPConfig
 	OAuth              OAuthConfig
 }
@@ -199,6 +201,7 @@ func Load() (*Config, error) {
 		TOTPEncryptionKey:  totpKey,
 		CookieSecure:       cookieSecure,
 		CORSAllowedOrigins: corsOrigins,
+		UploadDir:          resolveUploadDir(os.Getenv("UPLOAD_DIR")),
 		SMTP: SMTPConfig{
 			Host: strings.TrimSpace(os.Getenv("SMTP_HOST")),
 			Port: smtpPort,
@@ -231,6 +234,18 @@ func parseAppURL(raw string) (string, error) {
 		return "", errors.New("APP_URL must be an http or https URL with a host")
 	}
 	return trimmed, nil
+}
+
+// DefaultUploadDir returns the default persistent upload directory path.
+func DefaultUploadDir() string {
+	return "uploads"
+}
+
+func resolveUploadDir(raw string) string {
+	if trimmed := strings.TrimSpace(raw); trimmed != "" {
+		return filepath.Clean(trimmed)
+	}
+	return DefaultUploadDir()
 }
 
 func parseSecretBytes(name, raw string, minLen int) ([]byte, error) {

@@ -28,6 +28,10 @@ const (
 	RegisterWindow            = time.Hour
 	AccountDeleteMaxAttempts  = 3
 	AccountDeleteWindow       = time.Hour
+	ProfileUpdateMaxAttempts  = 20
+	ProfileUpdateWindow       = 15 * time.Minute
+	AvatarMaxAttempts         = 10
+	AvatarWindow              = 15 * time.Minute
 
 	defaultCleanupInterval = 5 * time.Minute
 	defaultMaxEntries      = 50_000
@@ -210,6 +214,8 @@ type AuthLimiters struct {
 	ForgotPassword *Store
 	Register       *Store
 	AccountDelete  *Store
+	ProfileUpdate  *Store
+	Avatar         *Store
 }
 
 // NewAuthLimiters constructs the configured auth rate limiters.
@@ -219,6 +225,8 @@ func NewAuthLimiters() *AuthLimiters {
 		ForgotPassword: NewStore(ForgotPasswordWindow, ForgotPasswordMaxAttempts, 2*time.Hour),
 		Register:       NewStore(RegisterWindow, RegisterMaxAttempts, 2*time.Hour),
 		AccountDelete:  NewStore(AccountDeleteWindow, AccountDeleteMaxAttempts, 2*time.Hour),
+		ProfileUpdate:  NewStore(ProfileUpdateWindow, ProfileUpdateMaxAttempts, 30*time.Minute),
+		Avatar:         NewStore(AvatarWindow, AvatarMaxAttempts, 30*time.Minute),
 	}
 }
 
@@ -231,4 +239,6 @@ func (a *AuthLimiters) Stop() {
 	a.ForgotPassword.Stop()
 	a.Register.Stop()
 	a.AccountDelete.Stop()
+	a.ProfileUpdate.Stop()
+	a.Avatar.Stop()
 }

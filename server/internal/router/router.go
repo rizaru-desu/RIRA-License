@@ -105,5 +105,135 @@ func New(
 		})
 	})
 
+	r.Route("/api/v1/users", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Patch("/me", authHandler.UpdateProfile)
+		r.Post("/me/avatar", authHandler.UploadAvatar)
+		r.Delete("/me/avatar", authHandler.DeleteAvatar)
+
+		// User management aliases under /api/v1/users (workspace-scoped)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireWorkspace(authSvc, cfg))
+			r.With(RequirePermission(auth.PermUsersRead)).Get("/", authHandler.AdminListUsers)
+			r.With(RequirePermission(auth.PermUsersInvite)).Post("/", authHandler.AdminCreateUser)
+			r.With(RequirePermission(auth.PermRolesManage)).Patch("/{id}/role", authHandler.AdminUpdateUserRole)
+			r.With(RequirePermission(auth.PermUsersSuspend)).Post("/{id}/suspend", authHandler.AdminSuspendUser)
+			r.With(RequirePermission(auth.PermUsersSuspend)).Post("/{id}/activate", authHandler.AdminActivateUser)
+			r.With(RequirePermission(auth.PermUsersUpdate)).Patch("/{id}", authHandler.AdminUpdateUser)
+			r.With(RequirePermission(auth.PermUsersRemove)).Delete("/{id}", authHandler.AdminRemoveUser)
+		})
+	})
+
+	// Multi-tenant workspace management (/api/v1/workspaces)
+	r.Route("/api/v1/workspaces", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Get("/", authHandler.ListWorkspaces)
+		r.Post("/", authHandler.CreateWorkspace)
+		r.Patch("/{id}", authHandler.UpdateWorkspace)
+		r.Delete("/{id}", authHandler.DeleteWorkspace)
+		r.Get("/invites", authHandler.ListPendingWorkspaceInvites)
+		r.Post("/exit", authHandler.ExitWorkspace)
+		r.Post("/{id}/switch", authHandler.SwitchWorkspace)
+		r.Post("/{id}/accept", authHandler.AcceptWorkspaceInvite)
+		r.Post("/{id}/decline", authHandler.DeclineWorkspaceInvite)
+		r.Post("/{id}/leave", authHandler.LeaveWorkspace)
+		r.Post("/{id}/transfer-ownership", authHandler.TransferWorkspaceOwnership)
+	})
+
+	// Platform Super Admin console (/api/v1/platform)
+	r.Route("/api/v1/platform", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireSuperadmin())
+		r.Get("/workspaces", authHandler.PlatformListWorkspaces)
+		r.Patch("/workspaces/{id}/plan", authHandler.PlatformUpdateWorkspacePlan)
+		r.Post("/workspaces/{id}/suspend", authHandler.PlatformSuspendWorkspace)
+		r.Post("/workspaces/{id}/activate", authHandler.PlatformActivateWorkspace)
+		r.Get("/users", authHandler.PlatformListUsers)
+		r.Get("/users/{id}/suspend-impact", authHandler.PlatformUserSuspendImpact)
+		r.Post("/users/{id}/suspend", authHandler.PlatformSuspendUser)
+		r.Post("/users/{id}/activate", authHandler.PlatformActivateUser)
+	})
+
+	// Admin user management (/api/v1/admin/users)
+	r.Route("/api/v1/admin/users", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireWorkspace(authSvc, cfg))
+		r.With(RequirePermission(auth.PermUsersRead)).Get("/", authHandler.AdminListUsers)
+		r.With(RequirePermission(auth.PermUsersInvite)).Post("/", authHandler.AdminCreateUser)
+		r.With(RequirePermission(auth.PermRolesManage)).Patch("/{id}/role", authHandler.AdminUpdateUserRole)
+		r.With(RequirePermission(auth.PermUsersSuspend)).Post("/{id}/suspend", authHandler.AdminSuspendUser)
+		r.With(RequirePermission(auth.PermUsersSuspend)).Post("/{id}/activate", authHandler.AdminActivateUser)
+		r.With(RequirePermission(auth.PermUsersUpdate)).Patch("/{id}", authHandler.AdminUpdateUser)
+		r.With(RequirePermission(auth.PermUsersRemove)).Delete("/{id}", authHandler.AdminRemoveUser)
+	})
+
+	// RBAC-protected resource routes (/api/v1/... and /api/v1/admin/...)
+	mountResourceRoutes(r, "/api/v1", authSvc, cfg, authHandler)
+	mountResourceRoutes(r, "/api/v1/admin", authSvc, cfg, authHandler)
+
+	// Static uploaded avatar serving
+	r.Get("/uploads/avatars/{filename}", authHandler.ServeAvatar)
+	r.Head("/uploads/avatars/{filename}", authHandler.ServeAvatar)
+
 	return r
+}
+
+func mountResourceRoutes(
+	r chi.Router,
+	prefix string,
+	authSvc *auth.Service,
+	cfg *config.Config,
+	authHandler *handler.AuthHandler,
+) {
+	r.Route(prefix+"/products", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireWorkspace(authSvc, cfg))
+		r.With(RequirePermission(auth.PermProductsRead)).Get("/", authHandler.ListProducts)
+		r.With(RequirePermission(auth.PermProductsCreate)).Post("/", authHandler.CreateProduct)
+		r.With(RequirePermission(auth.PermProductsRead)).Get("/{id}", authHandler.GetProduct)
+		r.With(RequirePermission(auth.PermProductsUpdate)).Patch("/{id}", authHandler.UpdateProduct)
+		r.With(RequirePermission(auth.PermProductsUpdate)).Put("/{id}", authHandler.UpdateProduct)
+		r.With(RequirePermission(auth.PermProductsDelete)).Delete("/{id}", authHandler.DeleteProduct)
+	})
+
+	r.Route(prefix+"/licenses", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireWorkspace(authSvc, cfg))
+		r.With(RequirePermission(auth.PermLicensesRead)).Get("/", authHandler.ListLicenses)
+		r.With(RequirePermission(auth.PermLicensesCreate)).Post("/", authHandler.CreateLicense)
+		r.With(RequirePermission(auth.PermLicensesRead)).Get("/{id}", authHandler.GetLicense)
+		r.With(RequirePermission(auth.PermLicensesUpdate)).Patch("/{id}", authHandler.UpdateLicense)
+		r.With(RequirePermission(auth.PermLicensesUpdate)).Put("/{id}", authHandler.UpdateLicense)
+		r.With(RequirePermission(auth.PermLicensesRevoke)).Post("/{id}/revoke", authHandler.RevokeLicense)
+		r.With(RequirePermission(auth.PermLicensesDelete)).Delete("/{id}", authHandler.DeleteLicense)
+	})
+
+	r.Route(prefix+"/activations", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireWorkspace(authSvc, cfg))
+		r.With(RequirePermission(auth.PermActivationsRead)).Get("/", authHandler.ListActivations)
+		r.With(RequirePermission(auth.PermActivationsCreate)).Post("/", authHandler.CreateActivation)
+		r.With(RequirePermission(auth.PermActivationsRevoke)).Post("/{id}/revoke", authHandler.RevokeActivation)
+		r.With(RequirePermission(auth.PermActivationsRevoke)).Delete("/{id}", authHandler.RevokeActivation)
+	})
+
+	r.Route(prefix+"/settings", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireWorkspace(authSvc, cfg))
+		r.With(RequirePermission(auth.PermSettingsRead)).Get("/", authHandler.GetSettings)
+		r.With(RequirePermission(auth.PermSettingsUpdate)).Patch("/", authHandler.UpdateSettings)
+		r.With(RequirePermission(auth.PermSettingsUpdate)).Put("/", authHandler.UpdateSettings)
+	})
+
+	r.Route(prefix+"/audit", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireWorkspace(authSvc, cfg))
+		r.With(RequirePermission(auth.PermAuditRead)).Get("/", authHandler.ListAuditLogs)
+	})
+
+	r.Route(prefix+"/audit-logs", func(r chi.Router) {
+		r.Use(RequireAuth(authSvc, cfg))
+		r.Use(RequireWorkspace(authSvc, cfg))
+		r.With(RequirePermission(auth.PermAuditRead)).Get("/", authHandler.ListAuditLogs)
+	})
 }

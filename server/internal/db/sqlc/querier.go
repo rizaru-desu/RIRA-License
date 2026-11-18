@@ -12,8 +12,18 @@ import (
 )
 
 type Querier interface {
+	AcceptWorkspaceMemberInvite(ctx context.Context, arg AcceptWorkspaceMemberInviteParams) (WorkspaceMember, error)
+	ActivateUser(ctx context.Context, id uuid.UUID) (User, error)
+	ActivateWorkspace(ctx context.Context, id uuid.UUID) (Workspace, error)
+	ActivateWorkspaceMember(ctx context.Context, arg ActivateWorkspaceMemberParams) (WorkspaceMember, error)
 	AnonymizeUserAuditLogs(ctx context.Context, userID uuid.NullUUID) error
+	ClearUserWorkspaceSession(ctx context.Context, arg ClearUserWorkspaceSessionParams) error
+	ClearWorkspaceSessions(ctx context.Context, activeWorkspaceID uuid.NullUUID) error
+	CountActiveOwners(ctx context.Context) (int64, error)
+	CountActiveWorkspaceOwners(ctx context.Context, workspaceID uuid.UUID) (int64, error)
+	CountAllUsers(ctx context.Context) (int64, error)
 	CountAuthEventsByDay(ctx context.Context, createdAt time.Time) ([]CountAuthEventsByDayRow, error)
+	CountWorkspaceMembers(ctx context.Context, workspaceID uuid.UUID) (int64, error)
 	CreateBackupCode(ctx context.Context, arg CreateBackupCodeParams) error
 	CreateEmailOTPCode(ctx context.Context, arg CreateEmailOTPCodeParams) (EmailOtpCode, error)
 	CreateOAuthAccount(ctx context.Context, arg CreateOAuthAccountParams) (OauthAccount, error)
@@ -21,6 +31,9 @@ type Querier interface {
 	CreateTrustedDevice(ctx context.Context, arg CreateTrustedDeviceParams) (TrustedDevice, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVerificationToken(ctx context.Context, arg CreateVerificationTokenParams) (VerificationToken, error)
+	CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error)
+	CreateWorkspaceMember(ctx context.Context, arg CreateWorkspaceMemberParams) (WorkspaceMember, error)
+	CreateWorkspaceMemberWithStatus(ctx context.Context, arg CreateWorkspaceMemberWithStatusParams) (WorkspaceMember, error)
 	DeleteSessionByID(ctx context.Context, id uuid.UUID) error
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteUserBackupCodes(ctx context.Context, userID uuid.UUID) error
@@ -31,9 +44,11 @@ type Querier interface {
 	DeleteUserSessions(ctx context.Context, userID uuid.UUID) error
 	DeleteUserTrustedDevices(ctx context.Context, userID uuid.UUID) error
 	DeleteUserVerificationTokens(ctx context.Context, userID uuid.UUID) error
+	DeleteWorkspaceMember(ctx context.Context, arg DeleteWorkspaceMemberParams) error
 	DisableTwoFactor(ctx context.Context, id uuid.UUID) error
 	EnableEmail2FA(ctx context.Context, id uuid.UUID) error
 	EnableTOTP(ctx context.Context, id uuid.UUID) error
+	GetFirstActiveWorkspace(ctx context.Context) (Workspace, error)
 	GetLatestActiveEmailOTP(ctx context.Context, userID uuid.UUID) (EmailOtpCode, error)
 	GetOAuthAccount(ctx context.Context, arg GetOAuthAccountParams) (OauthAccount, error)
 	GetRecentPasswordHistory(ctx context.Context, userID uuid.UUID) ([]string, error)
@@ -41,31 +56,60 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
 	GetUserByEmailIncludingDeleted(ctx context.Context, lower string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserByIDForUpdate(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserByIDIncludingDeleted(ctx context.Context, id uuid.UUID) (User, error)
 	GetValidTrustedDevice(ctx context.Context, arg GetValidTrustedDeviceParams) (TrustedDevice, error)
 	GetVerificationTokenByHash(ctx context.Context, arg GetVerificationTokenByHashParams) (VerificationToken, error)
+	GetWorkspaceActiveMembershipStats(ctx context.Context, workspaceID uuid.UUID) (GetWorkspaceActiveMembershipStatsRow, error)
+	GetWorkspaceByID(ctx context.Context, id uuid.UUID) (Workspace, error)
+	GetWorkspaceByIDForUpdate(ctx context.Context, id uuid.UUID) (Workspace, error)
+	GetWorkspaceBySlug(ctx context.Context, lower string) (Workspace, error)
+	GetWorkspaceMember(ctx context.Context, arg GetWorkspaceMemberParams) (WorkspaceMember, error)
 	IncrementEmailOTPAttempts(ctx context.Context, arg IncrementEmailOTPAttemptsParams) (EmailOtpCode, error)
 	IncrementFailedLogin(ctx context.Context, arg IncrementFailedLoginParams) (IncrementFailedLoginRow, error)
 	InsertAuthAuditLog(ctx context.Context, arg InsertAuthAuditLogParams) error
 	InsertPasswordHistory(ctx context.Context, arg InsertPasswordHistoryParams) error
+	InsertWorkspaceAuditLog(ctx context.Context, arg InsertWorkspaceAuditLogParams) error
 	InvalidateActiveEmailOTPs(ctx context.Context, userID uuid.UUID) error
 	InvalidateAllUserVerificationTokens(ctx context.Context, userID uuid.UUID) error
 	InvalidateUnusedVerificationTokens(ctx context.Context, arg InvalidateUnusedVerificationTokensParams) error
+	ListActiveWorkspacesForUserForUpdate(ctx context.Context, userID uuid.UUID) ([]ListActiveWorkspacesForUserForUpdateRow, error)
+	ListAllWorkspaces(ctx context.Context) ([]ListAllWorkspacesRow, error)
+	ListPendingWorkspaceInvitesForUser(ctx context.Context, userID uuid.UUID) ([]ListPendingWorkspaceInvitesForUserRow, error)
+	ListPlatformUsers(ctx context.Context) ([]ListPlatformUsersRow, error)
 	ListUnusedBackupCodes(ctx context.Context, userID uuid.UUID) ([]BackupCode, error)
+	ListUsers(ctx context.Context) ([]User, error)
 	ListUsersForHardDelete(ctx context.Context, deletedAt *time.Time) ([]uuid.UUID, error)
+	ListWorkspaceAuditLogs(ctx context.Context, arg ListWorkspaceAuditLogsParams) ([]AuthAuditLog, error)
+	ListWorkspaceMembersWithUsers(ctx context.Context, workspaceID uuid.UUID) ([]ListWorkspaceMembersWithUsersRow, error)
+	ListWorkspacesForUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesForUserRow, error)
 	MarkBackupCodeUsed(ctx context.Context, id uuid.UUID) (BackupCode, error)
 	MarkEmailOTPUsed(ctx context.Context, id uuid.UUID) (EmailOtpCode, error)
 	MarkVerificationTokenUsed(ctx context.Context, id uuid.UUID) (VerificationToken, error)
 	PrunePasswordHistory(ctx context.Context, userID uuid.UUID) error
+	ReactivateRemovedWorkspaceMember(ctx context.Context, arg ReactivateRemovedWorkspaceMemberParams) (WorkspaceMember, error)
+	ReinviteWorkspaceMember(ctx context.Context, arg ReinviteWorkspaceMemberParams) (WorkspaceMember, error)
+	RemoveWorkspaceMember(ctx context.Context, arg RemoveWorkspaceMemberParams) (WorkspaceMember, error)
 	ResetLoginFailuresAndUpdateLastLogin(ctx context.Context, id uuid.UUID) error
 	RestoreUser(ctx context.Context, id uuid.UUID) (User, error)
 	SetPendingTOTPSecret(ctx context.Context, arg SetPendingTOTPSecretParams) error
+	SetSessionActiveWorkspace(ctx context.Context, arg SetSessionActiveWorkspaceParams) error
 	SoftDeleteUser(ctx context.Context, id uuid.UUID) (User, error)
+	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (Workspace, error)
+	SuspendUser(ctx context.Context, arg SuspendUserParams) (User, error)
+	SuspendWorkspace(ctx context.Context, arg SuspendWorkspaceParams) (Workspace, error)
+	SuspendWorkspaceMember(ctx context.Context, arg SuspendWorkspaceMemberParams) (WorkspaceMember, error)
 	TouchSessionActivity(ctx context.Context, id uuid.UUID) error
+	UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarParams) (User, error)
 	UpdateUserAvatarIfEmpty(ctx context.Context, arg UpdateUserAvatarIfEmptyParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
 	UpdateUserEmailVerified(ctx context.Context, id uuid.UUID) error
+	UpdateUserName(ctx context.Context, arg UpdateUserNameParams) (User, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
+	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (User, error)
+	UpdateWorkspaceDetails(ctx context.Context, arg UpdateWorkspaceDetailsParams) (Workspace, error)
+	UpdateWorkspaceMemberRole(ctx context.Context, arg UpdateWorkspaceMemberRoleParams) (WorkspaceMember, error)
+	UpdateWorkspacePlanAndOverrides(ctx context.Context, arg UpdateWorkspacePlanAndOverridesParams) (Workspace, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -10,6 +10,8 @@
 # Subprojects not needed for landing page build
 saas/
 server/
+uploads/
+**/uploads
 
 # Dependencies & build artifacts
 **/node_modules

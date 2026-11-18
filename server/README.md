@@ -30,6 +30,7 @@ Server listens on **http://localhost:7819** by default. Migrations in `server/mi
 | `TOTP_ENCRYPTION_KEY` | **Yes** | — | Exact 32-byte AES-256-GCM key (64 hex chars or base64) for encrypting TOTP secrets at rest |
 | `COOKIE_SECURE` | No | auto | Defaults to `true` when `APP_URL` uses `https://` or `APP_ENV=production` |
 | `CORS_ALLOWED_ORIGINS` | No | `APP_URL` | Comma-separated allowed CORS origins |
+| `UPLOAD_DIR` | No | `uploads` | Persistent directory for uploaded user avatars |
 | `SMTP_HOST` | No | — | SMTP host. When unset in `development`, email links/OTPs are logged to server stdout marked `DEV-ONLY`. |
 | `SMTP_PORT` | No | `587` | SMTP port |
 | `SMTP_USER` | No | — | SMTP username (optional for local relays) |
@@ -65,6 +66,10 @@ OAuth providers are optional. When credentials are missing, that provider's UI b
 - `POST /2fa/totp/setup`, `POST /2fa/totp/verify`, `POST /2fa/totp/disable`
 - `POST /2fa/email/send`, `POST /2fa/email/verify`, `POST /2fa/backup-codes/regenerate`
 - `GET /providers`, `GET /oauth/{provider}`, `GET /oauth/{provider}/callback`
+
+## User Profile Endpoints (`/api/v1/users`)
+
+- `PATCH /me`, `POST /me/avatar`, `DELETE /me/avatar`
 
 ## Code Generation (`sqlc`)
 

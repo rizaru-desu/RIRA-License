@@ -33,6 +33,57 @@ const (
 	hardDeletePassTimeout     = 5 * time.Minute
 )
 
+// ensureNotSoleOwnerBeforeDelete blocks account deletion when the user is the sole active superadmin
+// or the sole active owner of any tenant workspace they belong to.
+func (s *Service) ensureNotSoleOwnerBeforeDelete(ctx context.Context, user sqlc.User) error {
+	q := s.store.Queries()
+	if user.IsSuperadmin {
+		users, err := q.ListPlatformUsers(ctx)
+		if err != nil {
+			return err
+		}
+		var activeSupers int
+		for _, u := range users {
+			if u.IsSuperadmin && u.Status == "active" && u.DeletedAt == nil {
+				activeSupers++
+			}
+		}
+		if activeSupers <= 1 {
+			return ErrSoleOwnerCannotDelete
+		}
+		return nil
+	}
+
+	wss, err := q.ListWorkspacesForUser(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+	if len(wss) == 0 {
+		if normalizeRole(user.Role) == RoleOwner {
+			ownerCount, countErr := q.CountActiveOwners(ctx)
+			if countErr != nil {
+				return countErr
+			}
+			if ownerCount <= 1 {
+				return ErrSoleOwnerCannotDelete
+			}
+		}
+		return nil
+	}
+	for _, w := range wss {
+		stats, countErr := q.GetWorkspaceActiveMembershipStats(ctx, w.ID)
+		if countErr != nil {
+			return countErr
+		}
+		role := normalizeRole(w.MemberRole)
+		if (role == RoleOwner && stats.ActiveOwners <= 1) ||
+			(isAdministrativeRole(role) && stats.ActiveAdmins <= 1) {
+			return ErrSoleOwnerCannotDelete
+		}
+	}
+	return nil
+}
+
 // RequestAccountDeletion verifies the user's primary credential (Argon2id password for
 // password users, or a 6-digit email OTP for OAuth-only users) and second factor when
 // 2FA is enabled, then issues a single-use 24h account_deletion confirmation token by email.
@@ -54,6 +105,9 @@ func (s *Service) RequestAccountDeletion(
 	}
 	if user.Status == "suspended" || user.DeletedAt != nil {
 		return ErrUnauthorized
+	}
+	if err := s.ensureNotSoleOwnerBeforeDelete(ctx, user); err != nil {
+		return err
 	}
 	if user.LockedUntil != nil && user.LockedUntil.After(s.now()) {
 		return ErrInvalidCredentials
@@ -215,6 +269,9 @@ func (s *Service) ConfirmAccountDeletion(ctx context.Context, rawToken string, m
 	}
 	if user.DeletedAt != nil {
 		return ErrInvalidToken
+	}
+	if err := s.ensureNotSoleOwnerBeforeDelete(ctx, user); err != nil {
+		return err
 	}
 
 	return s.store.WithTx(ctx, func(q sqlc.Querier) error {

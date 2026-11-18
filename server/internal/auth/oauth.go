@@ -232,14 +232,30 @@ func (s *Service) resolveOrCreateOAuthUser(ctx context.Context, provider string,
 	now := s.now()
 	var created sqlc.User
 	err = s.store.WithTx(ctx, func(q sqlc.Querier) error {
+		txCount, txErr := q.CountAllUsers(ctx)
+		if txErr != nil {
+			return txErr
+		}
+		isFirstUser := txCount == 0
 		u, txErr := q.CreateUser(ctx, sqlc.CreateUserParams{
 			Lower:           email,
 			Name:            name,
 			AvatarUrl:       pgText(profile.AvatarURL),
 			EmailVerifiedAt: &now,
+			Role:            RoleOwner,
+			IsSuperadmin:    isFirstUser,
 		})
 		if txErr != nil {
 			return txErr
+		}
+		if isFirstUser {
+			if txErr := ensureInitialWorkspaceForOwner(ctx, q, u.ID, s.Plan()); txErr != nil {
+				return txErr
+			}
+		} else {
+			if txErr := createPersonalWorkspaceForOwner(ctx, q, u.ID, name, FreePlan); txErr != nil {
+				return txErr
+			}
 		}
 		if _, txErr := q.CreateOAuthAccount(ctx, sqlc.CreateOAuthAccountParams{
 			UserID:         u.ID,

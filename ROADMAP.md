@@ -13,6 +13,11 @@
 - **`landingpage/` (Svelte 5 + Vite + Tailwind CSS 4):** Complete Neo-Brutalist marketing & documentation site with 9 sections (`Hero`, `PlatformSupport`, `Features`, `HowItWorks`, `DeveloperExperience`, `DeploymentOptions`, `FAQ`, `Community`, `FinalCTA`), containerization (`landingpage/Dockerfile`, `landingpage/nginx.conf`), edge routing (`docker-compose.yml`, `Caddyfile`), and Tailscale SSH CI/CD workflow (`.github/workflows/deploy.yml`) ready in the working tree.
 - **`saas/` (Control Plane UI):** Initial Vite template from `780a6e5` was superseded when moving the landing page into `landingpage/`; the Svelte 5 control plane application in `saas/` has not been built yet.
 
+### Completed (Auth, RBAC & Multi-Tenant Workspace)
+- [x] **Authentication & Account Security** — Email/password registration, email verification, password reset, email change, OAuth, 2FA (TOTP + Email OTP + backup codes), profile/avatar management, account soft-delete/restore, and endpoint rate limiting (`ratelimit.AuthLimiters`).
+- [x] **Per-Workspace RBAC & Permissions** — Workspace-scoped `owner`, `admin`, `member`, `viewer` roles plus platform `superadmin`; `admin` includes `users:remove` (restricted to `member`/`viewer` targets) and `activations:create`.
+- [x] **Multi-Tenant Workspace & Membership Governance** — Pending invite consent (`accept`/`decline`), workspace switching, `leave` workspace with automatic fallback, `ErrLastActiveAdmin` / `ErrLastActiveMember` invariants, workspace `PATCH`/`DELETE`, and `POST /api/v1/workspaces/{id}/transfer-ownership`.
+
 ---
 
 ## M0 — Landing Page Live (`https://license.rira.web.id`)

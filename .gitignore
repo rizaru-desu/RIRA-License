@@ -4,6 +4,11 @@ server/bin/
 *.exe
 *.out
 
+# Uploads
+uploads/
+server/uploads/
+server/uploads
+
 # Environment
 .env
 .env.local

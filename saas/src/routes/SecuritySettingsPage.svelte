@@ -4,7 +4,7 @@
 	import { ApiError, authApi, type EnableTwoFactorResponse } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { router } from '$lib/stores/router.svelte';
-	import AppShell from '$lib/components/layout/AppShell.svelte';
+	import SettingsLayout from '$lib/components/layout/SettingsLayout.svelte';
 	import PasswordMeter, { MIN_PASSWORD_LENGTH } from '$lib/components/PasswordMeter.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Badge from '$lib/components/ui/Badge.svelte';
@@ -322,7 +322,7 @@
 	}
 </script>
 
-<AppShell>
+<SettingsLayout>
 	{#if authStore.user}
 		<div class="space-y-6">
 			<div>
@@ -822,5 +822,5 @@
 			</Card>
 		</div>
 	{/if}
-</AppShell>
+</SettingsLayout>
 

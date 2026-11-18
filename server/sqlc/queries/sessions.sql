@@ -18,6 +18,7 @@ RETURNING *;
 SELECT
     s.id AS session_id,
     s.user_id AS session_user_id,
+    s.active_workspace_id AS session_active_workspace_id,
     s.token_hash AS session_token_hash,
     s.user_agent AS session_user_agent,
     s.ip_address AS session_ip_address,
@@ -30,7 +31,11 @@ SELECT
     u.name,
     u.avatar_url,
     u.email_verified_at,
+    u.role,
+    u.is_superadmin,
     u.status,
+    u.suspended_reason,
+    u.suspended_at,
     u.deleted_at,
     u.two_factor_enabled,
     u.two_factor_method,
@@ -49,6 +54,11 @@ LIMIT 1;
 -- name: TouchSessionActivity :exec
 UPDATE sessions
 SET last_activity_at = now()
+WHERE id = $1;
+
+-- name: SetSessionActiveWorkspace :exec
+UPDATE sessions
+SET active_workspace_id = $2
 WHERE id = $1;
 
 -- name: DeleteSessionByTokenHash :exec

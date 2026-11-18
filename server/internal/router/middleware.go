@@ -15,9 +15,13 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"riralicense/internal/auth"
 	"riralicense/internal/config"
@@ -50,8 +54,8 @@ func authMiddleware(svc *auth.Service, cfg *config.Config, required bool) func(h
 			ctx, cancel := context.WithTimeout(r.Context(), cfg.HTTPTimeout)
 			defer cancel()
 
-			user, _, err := svc.ValidateSession(ctx, cookie.Value)
-			if err != nil {
+			user, sessionID, err := svc.ValidateSession(ctx, cookie.Value)
+			if err != nil || user == nil || user.Status != "active" {
 				http.SetCookie(w, &http.Cookie{
 					Name:     handler.SessionCookieName,
 					Value:    "",
@@ -70,7 +74,100 @@ func authMiddleware(svc *auth.Service, cfg *config.Config, required bool) func(h
 				return
 			}
 
-			next.ServeHTTP(w, r.WithContext(handler.ContextWithUser(r.Context(), user)))
+			nextCtx := handler.ContextWithUser(r.Context(), user)
+			nextCtx = handler.ContextWithSessionID(nextCtx, sessionID)
+			next.ServeHTTP(w, r.WithContext(nextCtx))
+		})
+	}
+}
+
+// RequireWorkspace resolves the active workspace (from X-Workspace-ID or the session's active workspace)
+// and updates the request user context with their workspace-scoped role and permissions.
+func RequireWorkspace(svc *auth.Service, cfg *config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, ok := handler.UserFromContext(r.Context())
+			if !ok || user == nil || user.Status != "active" {
+				writeUnauthorized(w)
+				return
+			}
+
+			var requestedWS *uuid.UUID
+			if rawWS := strings.TrimSpace(r.Header.Get("X-Workspace-ID")); rawWS != "" {
+				parsed, err := uuid.Parse(rawWS)
+				if err != nil {
+					writeJSONError(w, http.StatusBadRequest, "invalid workspace id")
+					return
+				}
+				requestedWS = &parsed
+			}
+
+			ctx, cancel := context.WithTimeout(r.Context(), cfg.HTTPTimeout)
+			defer cancel()
+
+			wsCtx, err := svc.ResolveWorkspaceContext(ctx, user, requestedWS)
+			if err != nil {
+				switch {
+				case errors.Is(err, auth.ErrWorkspaceNotFound):
+					writeJSONError(w, http.StatusNotFound, auth.ErrWorkspaceNotFound.Error())
+				case errors.Is(err, auth.ErrWorkspaceSuspended):
+					writeJSONError(w, http.StatusForbidden, auth.ErrWorkspaceSuspended.Error())
+				case errors.Is(err, auth.ErrForbidden):
+					writeForbidden(w)
+				case errors.Is(err, auth.ErrUnauthorized):
+					writeUnauthorized(w)
+				default:
+					writeJSONError(w, http.StatusInternalServerError, "internal server error")
+				}
+				return
+			}
+
+			scopedUser := *user
+			scopedUser.Role = wsCtx.Role
+			scopedUser.Permissions = wsCtx.Permissions
+			wsID := wsCtx.Workspace.ID
+			scopedUser.ActiveWorkspaceID = &wsID
+
+			nextCtx := handler.ContextWithUser(r.Context(), &scopedUser)
+			nextCtx = handler.ContextWithWorkspace(nextCtx, wsCtx)
+			next.ServeHTTP(w, r.WithContext(nextCtx))
+		})
+	}
+}
+
+// RequireSuperadmin enforces that the authenticated user holds platform superadmin privileges.
+func RequireSuperadmin() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, ok := handler.UserFromContext(r.Context())
+			if !ok || user == nil || user.Status != "active" {
+				writeUnauthorized(w)
+				return
+			}
+			if !user.IsSuperadmin {
+				writeForbidden(w)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePermission enforces that the authenticated user is active and holds the given permission.
+// It must be applied after RequireAuth. Missing permission always returns 403 {"error":"forbidden"}.
+func RequirePermission(perm string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, ok := handler.UserFromContext(r.Context())
+			if !ok || user == nil || user.Status != "active" {
+				writeUnauthorized(w)
+				return
+			}
+			if !auth.HasPermission(user.Role, user.IsSuperadmin, perm) {
+				writeForbidden(w)
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -85,7 +182,7 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Workspace-ID")
 			}
 
 			if r.Method == http.MethodOptions {
@@ -112,4 +209,14 @@ func writeUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+}
+
+func writeForbidden(w http.ResponseWriter) {
+	writeJSONError(w, http.StatusForbidden, "forbidden")
+}
+
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

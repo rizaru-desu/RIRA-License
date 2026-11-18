@@ -13,6 +13,74 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activateUser = `-- name: ActivateUser :one
+UPDATE users
+SET status = 'active',
+    suspended_reason = NULL,
+    suspended_at = NULL,
+    failed_login_attempts = 0,
+    locked_until = NULL
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+`
+
+func (q *Queries) ActivateUser(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, activateUser, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
+		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const countActiveOwners = `-- name: CountActiveOwners :one
+SELECT COUNT(*)
+FROM users
+WHERE role = 'owner'
+  AND status = 'active'
+  AND deleted_at IS NULL
+`
+
+func (q *Queries) CountActiveOwners(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveOwners)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countAllUsers = `-- name: CountAllUsers :one
+SELECT COUNT(*)
+FROM users
+`
+
+func (q *Queries) CountAllUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAllUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createOAuthAccount = `-- name: CreateOAuthAccount :one
 INSERT INTO oauth_accounts (
     user_id,
@@ -52,15 +120,19 @@ INSERT INTO users (
     password_hash,
     name,
     avatar_url,
-    email_verified_at
+    email_verified_at,
+    role,
+    is_superadmin
 ) VALUES (
     lower($1),
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6,
+    $7
 )
-RETURNING id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -69,6 +141,8 @@ type CreateUserParams struct {
 	Name            string      `json:"name"`
 	AvatarUrl       pgtype.Text `json:"avatar_url"`
 	EmailVerifiedAt *time.Time  `json:"email_verified_at"`
+	Role            string      `json:"role"`
+	IsSuperadmin    bool        `json:"is_superadmin"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
@@ -78,6 +152,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.Name,
 		arg.AvatarUrl,
 		arg.EmailVerifiedAt,
+		arg.Role,
+		arg.IsSuperadmin,
 	)
 	var i User
 	err := row.Scan(
@@ -87,7 +163,11 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -191,7 +271,7 @@ func (q *Queries) GetOAuthAccount(ctx context.Context, arg GetOAuthAccountParams
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 FROM users
 WHERE lower(email) = lower($1)
   AND deleted_at IS NULL
@@ -208,7 +288,11 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -224,7 +308,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 }
 
 const getUserByEmailIncludingDeleted = `-- name: GetUserByEmailIncludingDeleted :one
-SELECT id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 FROM users
 WHERE lower(email) = lower($1)
 LIMIT 1
@@ -240,7 +324,11 @@ func (q *Queries) GetUserByEmailIncludingDeleted(ctx context.Context, lower stri
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -256,7 +344,7 @@ func (q *Queries) GetUserByEmailIncludingDeleted(ctx context.Context, lower stri
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 FROM users
 WHERE id = $1
   AND deleted_at IS NULL
@@ -273,7 +361,49 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserByIDForUpdate = `-- name: GetUserByIDForUpdate :one
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+FROM users
+WHERE id = $1
+  AND deleted_at IS NULL
+LIMIT 1
+FOR UPDATE
+`
+
+func (q *Queries) GetUserByIDForUpdate(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByIDForUpdate, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
+		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -289,7 +419,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 }
 
 const getUserByIDIncludingDeleted = `-- name: GetUserByIDIncludingDeleted :one
-SELECT id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 FROM users
 WHERE id = $1
 LIMIT 1
@@ -305,7 +435,11 @@ func (q *Queries) GetUserByIDIncludingDeleted(ctx context.Context, id uuid.UUID)
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -348,6 +482,55 @@ func (q *Queries) IncrementFailedLogin(ctx context.Context, arg IncrementFailedL
 	var i IncrementFailedLoginRow
 	err := row.Scan(&i.FailedLoginAttempts, &i.LockedUntil)
 	return i, err
+}
+
+const listUsers = `-- name: ListUsers :many
+SELECT id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+FROM users
+WHERE deleted_at IS NULL
+ORDER BY created_at ASC, id ASC
+`
+
+func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := q.db.Query(ctx, listUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.PasswordHash,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.EmailVerifiedAt,
+			&i.Role,
+			&i.IsSuperadmin,
+			&i.Status,
+			&i.SuspendedReason,
+			&i.SuspendedAt,
+			&i.DeletedAt,
+			&i.TwoFactorEnabled,
+			&i.TwoFactorMethod,
+			&i.TotpSecretEncrypted,
+			&i.TotpVerifiedAt,
+			&i.FailedLoginAttempts,
+			&i.LockedUntil,
+			&i.LastLoginAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listUsersForHardDelete = `-- name: ListUsersForHardDelete :many
@@ -396,11 +579,13 @@ const restoreUser = `-- name: RestoreUser :one
 UPDATE users
 SET deleted_at = NULL,
     status = 'active',
+    suspended_reason = NULL,
+    suspended_at = NULL,
     failed_login_attempts = 0,
     locked_until = NULL
 WHERE id = $1
   AND deleted_at IS NOT NULL
-RETURNING id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 `
 
 func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -413,7 +598,11 @@ func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -456,7 +645,7 @@ SET deleted_at = now(),
     totp_verified_at = NULL
 WHERE id = $1
   AND deleted_at IS NULL
-RETURNING id, email, password_hash, name, avatar_url, email_verified_at, status, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 `
 
 func (q *Queries) SoftDeleteUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -469,7 +658,97 @@ func (q *Queries) SoftDeleteUser(ctx context.Context, id uuid.UUID) (User, error
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const suspendUser = `-- name: SuspendUser :one
+UPDATE users
+SET status = 'suspended',
+    suspended_reason = $2,
+    suspended_at = now()
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+`
+
+type SuspendUserParams struct {
+	ID              uuid.UUID   `json:"id"`
+	SuspendedReason pgtype.Text `json:"suspended_reason"`
+}
+
+func (q *Queries) SuspendUser(ctx context.Context, arg SuspendUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, suspendUser, arg.ID, arg.SuspendedReason)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
+		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateUserAvatar = `-- name: UpdateUserAvatar :one
+UPDATE users
+SET avatar_url = $2
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+`
+
+type UpdateUserAvatarParams struct {
+	ID        uuid.UUID   `json:"id"`
+	AvatarUrl pgtype.Text `json:"avatar_url"`
+}
+
+func (q *Queries) UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserAvatar, arg.ID, arg.AvatarUrl)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
+		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -531,6 +810,48 @@ func (q *Queries) UpdateUserEmailVerified(ctx context.Context, id uuid.UUID) err
 	return err
 }
 
+const updateUserName = `-- name: UpdateUserName :one
+UPDATE users
+SET name = $2
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+`
+
+type UpdateUserNameParams struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+func (q *Queries) UpdateUserName(ctx context.Context, arg UpdateUserNameParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserName, arg.ID, arg.Name)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
+		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 UPDATE users
 SET password_hash = $2
@@ -546,4 +867,46 @@ type UpdateUserPasswordParams struct {
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
 	_, err := q.db.Exec(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
 	return err
+}
+
+const updateUserRole = `-- name: UpdateUserRole :one
+UPDATE users
+SET role = $2
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, email, password_hash, name, avatar_url, email_verified_at, role, is_superadmin, status, suspended_reason, suspended_at, deleted_at, two_factor_enabled, two_factor_method, totp_secret_encrypted, totp_verified_at, failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+`
+
+type UpdateUserRoleParams struct {
+	ID   uuid.UUID `json:"id"`
+	Role string    `json:"role"`
+}
+
+func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserRole, arg.ID, arg.Role)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
+		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
+		&i.DeletedAt,
+		&i.TwoFactorEnabled,
+		&i.TwoFactorMethod,
+		&i.TotpSecretEncrypted,
+		&i.TotpVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

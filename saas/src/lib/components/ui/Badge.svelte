@@ -9,7 +9,10 @@
 					yellow: 'bg-yellow text-ink shadow-brutal-xs',
 					cobalt: 'bg-cobalt text-surface shadow-brutal-xs',
 					coral: 'bg-coral text-ink shadow-brutal-xs',
-					cream: 'bg-cream text-ink shadow-brutal-xs'
+					cream: 'bg-cream text-ink shadow-brutal-xs',
+					grey: 'bg-zinc-200 text-ink/80 shadow-brutal-xs',
+					green: 'bg-emerald-300 text-ink shadow-brutal-xs',
+					red: 'bg-red-400 text-ink shadow-brutal-xs'
 				}
 			},
 			defaultVariants: {

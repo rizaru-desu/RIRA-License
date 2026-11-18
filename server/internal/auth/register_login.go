@@ -24,11 +24,17 @@ import (
 	"riralicense/internal/db/sqlc"
 )
 
-// Register creates an unverified user account, records initial password history,
-// and emails an email-verification link. No session is created until verified.
+// IsRegistrationOpen reports whether public self-registration is enabled.
+func (s *Service) IsRegistrationOpen(_ context.Context) (bool, error) {
+	return true, nil
+}
+
+// Register creates the initial owner + superadmin account when no users exist yet,
+// or a standard tenant owner with their own Free workspace on subsequent public signups.
 func (s *Service) Register(ctx context.Context, email, password, name string, meta RequestMeta) (*UserDTO, error) {
 	email = normalizeEmail(email)
 	name = strings.TrimSpace(name)
+
 	if len(password) < crypto.MinPasswordLength {
 		return nil, ErrPasswordTooShort
 	}
@@ -53,14 +59,30 @@ func (s *Service) Register(ctx context.Context, email, password, name string, me
 
 	var created sqlc.User
 	err = s.store.WithTx(ctx, func(q sqlc.Querier) error {
+		txCount, txErr := q.CountAllUsers(ctx)
+		if txErr != nil {
+			return txErr
+		}
+		isFirstUser := txCount == 0
 		u, txErr := q.CreateUser(ctx, sqlc.CreateUserParams{
 			Lower:           email,
 			PasswordHash:    pgText(passwordHash),
 			Name:            name,
 			EmailVerifiedAt: nil,
+			Role:            RoleOwner,
+			IsSuperadmin:    isFirstUser,
 		})
 		if txErr != nil {
 			return txErr
+		}
+		if isFirstUser {
+			if txErr := ensureInitialWorkspaceForOwner(ctx, q, u.ID, s.Plan()); txErr != nil {
+				return txErr
+			}
+		} else {
+			if txErr := createPersonalWorkspaceForOwner(ctx, q, u.ID, name, FreePlan); txErr != nil {
+				return txErr
+			}
 		}
 		if txErr := q.InsertPasswordHistory(ctx, sqlc.InsertPasswordHistoryParams{
 			UserID:       u.ID,

@@ -1,6 +1,31 @@
 <script lang="ts" module>
+	import {
+		INITIAL_DUMMY_NOTIFICATIONS,
+		type DummyNotification
+	} from '$lib/data/dummyNotifications';
+
 	const STORAGE_KEY = 'rira_sidebar_collapsed';
+
 	let pendingFocusHamburger = false;
+	let notificationsState = $state<DummyNotification[]>(
+		INITIAL_DUMMY_NOTIFICATIONS.map((item) => ({ ...item }))
+	);
+
+	export function computeInitials(name?: string | null, email?: string | null): string {
+		const trimmedName = (name ?? '').trim();
+		if (trimmedName.length > 0) {
+			const words = trimmedName.split(/\s+/).filter(Boolean);
+			if (words.length >= 2) {
+				return `${words[0][0]}${words[1][0]}`.toUpperCase();
+			}
+			return words[0][0].toUpperCase();
+		}
+		const trimmedEmail = (email ?? '').trim();
+		if (trimmedEmail.length > 0) {
+			return trimmedEmail[0].toUpperCase();
+		}
+		return '?';
+	}
 </script>
 
 <script lang="ts">
@@ -8,16 +33,27 @@
 	import {
 		KeyRound,
 		LayoutDashboard,
-		ShieldCheck,
 		LogOut,
 		Menu,
 		X,
 		PanelLeftClose,
-		PanelLeftOpen
+		PanelLeftOpen,
+		Bell,
+		Settings,
+		Users,
+		TriangleAlert,
+		Laptop,
+		Globe,
+		BarChart3,
+		CheckCheck,
+		Building2,
+		Plus,
+		Shield
 	} from '@lucide/svelte';
+	import { ApiError, resolveAvatarUrl } from '$lib/api/auth';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { router } from '$lib/stores/router.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
+	import type { DummyNotificationKind } from '$lib/data/dummyNotifications';
 
 	interface Props {
 		children?: Snippet;
@@ -47,29 +83,70 @@
 	let desktopCollapsed = $state<boolean>(readStoredDesktopCollapsed());
 	let tabletCollapsed = $state<boolean>(true);
 	let drawerOpen = $state<boolean>(false);
+	let bellOpen = $state<boolean>(false);
+	let avatarOpen = $state<boolean>(false);
+	let avatarLoadError = $state<boolean>(false);
 	let loggingOut = $state<boolean>(false);
+	let switchingWorkspace = $state<boolean>(false);
+	let createWsOpen = $state<boolean>(false);
+	let newWsName = $state<string>('');
+	let newWsSlug = $state<string>('');
+	let createWsError = $state<string>('');
+	let creatingWs = $state<boolean>(false);
 
 	let hamburgerBtn = $state<HTMLButtonElement | null>(null);
 	let drawerEl = $state<HTMLElement | null>(null);
 	let drawerFirstFocusEl = $state<HTMLButtonElement | null>(null);
+	let headerActionsEl = $state<HTMLDivElement | null>(null);
+	let bellBtn = $state<HTMLButtonElement | null>(null);
+	let avatarBtn = $state<HTMLButtonElement | null>(null);
 
 	const isCollapsed = $derived(viewport === 'tablet' ? tabletCollapsed : desktopCollapsed);
 
-	const navItems = [
+	const navItems = $derived([
 		{
 			label: 'Overview',
 			href: '/dashboard',
 			icon: LayoutDashboard
 		},
-		{
-			label: 'Security',
-			href: '/settings/security',
-			icon: ShieldCheck
-		}
-	] as const;
+		...(authStore.user?.is_superadmin
+			? [
+					{
+						label: 'Platform',
+						href: '/platform',
+						icon: Shield
+					}
+				]
+			: [])
+	]);
 
 	const currentPageTitle = $derived(
-		navItems.find((item) => item.href === router.pathname)?.label ?? 'Dashboard'
+		router.pathname === '/settings/profile'
+			? 'Profile Settings'
+			: router.pathname === '/settings/security'
+				? 'Security Settings'
+				: router.pathname === '/workspace/users'
+					? 'Workspace Users'
+					: router.pathname === '/platform'
+						? 'Platform Console'
+						: (navItems.find((item) => item.href === router.pathname)?.label ?? 'Overview')
+	);
+
+	const userInitials = $derived(
+		computeInitials(authStore.user?.name, authStore.user?.email)
+	);
+
+	const resolvedHeaderAvatar = $derived(
+		resolveAvatarUrl(authStore.user?.avatar_url)
+	);
+
+	$effect(() => {
+		void resolvedHeaderAvatar;
+		avatarLoadError = false;
+	});
+
+	const unreadCount = $derived(
+		notificationsState.filter((item) => item.unread).length
 	);
 
 	$effect(() => {
@@ -104,8 +181,39 @@
 		}
 	}
 
+	function handleWindowClick(e: MouseEvent) {
+		if (!bellOpen && !avatarOpen) return;
+		const target = e.target as Node | null;
+		if (headerActionsEl && target && !headerActionsEl.contains(target)) {
+			bellOpen = false;
+			avatarOpen = false;
+		}
+	}
+
 	function handleWindowKeydown(e: KeyboardEvent) {
-		if (drawerOpen && e.key === 'Escape') {
+		if (e.key !== 'Escape') return;
+
+		if (createWsOpen) {
+			e.preventDefault();
+			closeCreateWorkspaceModal();
+			return;
+		}
+
+		if (bellOpen) {
+			e.preventDefault();
+			bellOpen = false;
+			bellBtn?.focus();
+			return;
+		}
+
+		if (avatarOpen) {
+			e.preventDefault();
+			avatarOpen = false;
+			avatarBtn?.focus();
+			return;
+		}
+
+		if (drawerOpen) {
 			e.preventDefault();
 			void closeDrawer(true);
 		}
@@ -124,7 +232,47 @@
 		}
 	}
 
+	function toggleBell() {
+		const next = !bellOpen;
+		bellOpen = next;
+		if (next) {
+			avatarOpen = false;
+		}
+	}
+
+	function toggleAvatar() {
+		const next = !avatarOpen;
+		avatarOpen = next;
+		if (next) {
+			bellOpen = false;
+		}
+	}
+
+	function markAllRead() {
+		notificationsState = notificationsState.map((item) => ({
+			...item,
+			unread: false
+		}));
+	}
+
+	function notificationIcon(kind: DummyNotificationKind) {
+		switch (kind) {
+			case 'warning':
+				return TriangleAlert;
+			case 'activation':
+				return Laptop;
+			case 'signin':
+				return Globe;
+			case 'security':
+				return KeyRound;
+			case 'summary':
+				return BarChart3;
+		}
+	}
+
 	async function openDrawer() {
+		bellOpen = false;
+		avatarOpen = false;
 		drawerOpen = true;
 		await tick();
 		drawerFirstFocusEl?.focus();
@@ -158,7 +306,13 @@
 		}
 	}
 
+	function handleNavigateSettings() {
+		avatarOpen = false;
+		router.navigate('/settings/profile');
+	}
+
 	async function handleLogout() {
+		avatarOpen = false;
 		loggingOut = true;
 		try {
 			await authStore.logout();
@@ -167,9 +321,182 @@
 			loggingOut = false;
 		}
 	}
+
+	async function handleSwitchWorkspace(workspaceId: string) {
+		if (switchingWorkspace) return;
+		if (!workspaceId) {
+			if (!authStore.workspace) return;
+			switchingWorkspace = true;
+			try {
+				await authStore.exitWorkspace();
+				if (router.pathname === '/workspace/users') {
+					router.navigate('/platform', true);
+				}
+			} finally {
+				switchingWorkspace = false;
+			}
+			return;
+		}
+		if (workspaceId === authStore.workspace?.id) return;
+		switchingWorkspace = true;
+		try {
+			await authStore.switchWorkspace(workspaceId);
+		} finally {
+			switchingWorkspace = false;
+		}
+	}
+
+	function openCreateWorkspaceModal() {
+		newWsName = '';
+		newWsSlug = '';
+		createWsError = '';
+		createWsOpen = true;
+	}
+
+	function closeCreateWorkspaceModal() {
+		if (creatingWs) return;
+		createWsOpen = false;
+		createWsError = '';
+	}
+
+	async function handleCreateWorkspace(e: SubmitEvent) {
+		e.preventDefault();
+		const trimmed = newWsName.trim();
+		if (trimmed.length < 2) {
+			createWsError = 'Workspace name must be at least 2 characters.';
+			return;
+		}
+		createWsError = '';
+		creatingWs = true;
+		try {
+			await authStore.createWorkspace(trimmed, newWsSlug);
+			createWsOpen = false;
+			newWsName = '';
+			newWsSlug = '';
+		} catch (err) {
+			createWsError = err instanceof ApiError ? err.message : 'Failed to create workspace.';
+		} finally {
+			creatingWs = false;
+		}
+	}
 </script>
 
-<svelte:window onresize={handleWindowResize} onkeydown={handleWindowKeydown} />
+<svelte:window
+	onresize={handleWindowResize}
+	onclick={handleWindowClick}
+	onkeydown={handleWindowKeydown}
+/>
+
+{#snippet workspaceSection(isMobile: boolean)}
+	{#if authStore.user?.is_superadmin}
+		{#if authStore.workspace}
+			<div class="shrink-0 border-b-2 border-ink bg-cream/60 px-3 py-2.5 space-y-2">
+				<div class="flex items-center justify-between gap-2">
+					<span class="flex items-center gap-1.5 font-mono text-[10px] font-extrabold uppercase tracking-wider text-ink/70">
+						<Shield class="h-3.5 w-3.5 text-cobalt" aria-hidden="true" />
+						<span>Inspecting</span>
+					</span>
+					<button
+						type="button"
+						disabled={switchingWorkspace}
+						onclick={() => handleSwitchWorkspace('')}
+						title="Exit workspace inspection"
+						class="inline-flex items-center gap-1 rounded border border-ink bg-surface px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-ink shadow-brutal-xs cursor-pointer hover:bg-coral disabled:opacity-60"
+					>
+						<X class="h-3 w-3" aria-hidden="true" />
+						<span>Exit</span>
+					</button>
+				</div>
+				<div class="rounded border-2 border-ink bg-yellow/35 px-2 py-1.5">
+					<p class="font-heading text-xs font-extrabold text-ink truncate">
+						{authStore.workspace.name}
+					</p>
+					<p class="font-mono text-[10px] font-bold uppercase text-ink/70 truncate">
+						{authStore.workspace.plan} · {authStore.workspace.slug}
+					</p>
+				</div>
+				<button
+					type="button"
+					onclick={() =>
+						isMobile
+							? void handleDrawerNav('/workspace/users')
+							: router.navigate('/workspace/users')}
+					aria-current={router.pathname === '/workspace/users' ? 'page' : undefined}
+					class="flex w-full items-center justify-between rounded border-2 border-ink px-2 py-1 font-mono text-[11px] font-bold uppercase text-ink shadow-brutal-xs cursor-pointer transition-colors {router.pathname ===
+					'/workspace/users'
+						? 'bg-yellow'
+						: 'bg-surface hover:bg-yellow'}"
+				>
+					<span class="flex items-center gap-1.5">
+						<Users class="h-3.5 w-3.5 text-cobalt" aria-hidden="true" />
+						<span>Members</span>
+					</span>
+					<span aria-hidden="true">&rarr;</span>
+				</button>
+			</div>
+		{/if}
+	{:else if authStore.user}
+		<div class="shrink-0 border-b-2 border-ink bg-cream/60 px-3 py-2.5 space-y-2">
+			<div class="flex items-center justify-between gap-2">
+				<span class="flex items-center gap-1.5 font-mono text-[10px] font-extrabold uppercase tracking-wider text-ink/70">
+					<Building2 class="h-3.5 w-3.5 text-cobalt" aria-hidden="true" />
+					<span>Workspace</span>
+				</span>
+				<button
+					type="button"
+					onclick={() => {
+						if (isMobile) void closeDrawer(false);
+						openCreateWorkspaceModal();
+					}}
+					title="Create workspace"
+					class="inline-flex items-center gap-1 rounded border border-ink bg-surface px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-ink shadow-brutal-xs cursor-pointer hover:bg-yellow"
+				>
+					<Plus class="h-3 w-3" aria-hidden="true" />
+					<span>New</span>
+				</button>
+			</div>
+			{#if authStore.workspaces.length > 0}
+				<select
+					aria-label="Active workspace"
+					value={authStore.workspace?.id ?? ''}
+					disabled={switchingWorkspace}
+					onchange={(e) => handleSwitchWorkspace((e.currentTarget as HTMLSelectElement).value)}
+					class="w-full rounded border-2 border-ink bg-surface px-2 py-1.5 font-heading text-xs font-bold text-ink shadow-brutal-xs cursor-pointer focus:outline-none focus:ring-2 focus:ring-cobalt disabled:opacity-60"
+				>
+					{#each authStore.workspaces as ws (ws.id)}
+						<option value={ws.id} selected={authStore.workspace?.id === ws.id}>
+							{ws.name} ({ws.plan.toUpperCase()})
+						</option>
+					{/each}
+				</select>
+			{:else if authStore.workspace}
+				<div class="rounded border-2 border-ink bg-surface px-2 py-1.5 font-heading text-xs font-bold text-ink truncate">
+					{authStore.workspace.name}
+				</div>
+			{/if}
+			{#if authStore.canViewUsers}
+				<button
+					type="button"
+					onclick={() =>
+						isMobile
+							? void handleDrawerNav('/workspace/users')
+							: router.navigate('/workspace/users')}
+					aria-current={router.pathname === '/workspace/users' ? 'page' : undefined}
+					class="flex w-full items-center justify-between rounded border-2 border-ink px-2 py-1 font-mono text-[11px] font-bold uppercase text-ink shadow-brutal-xs cursor-pointer transition-colors {router.pathname ===
+					'/workspace/users'
+						? 'bg-yellow'
+						: 'bg-surface hover:bg-yellow'}"
+				>
+					<span class="flex items-center gap-1.5">
+						<Users class="h-3.5 w-3.5 text-cobalt" aria-hidden="true" />
+						<span>Members</span>
+					</span>
+					<span aria-hidden="true">&rarr;</span>
+				</button>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
 
 <div data-app-shell class="flex h-dvh w-full overflow-hidden bg-cream bg-brutal-grid">
 	<!-- Desktop & Tablet Fixed Sidebar (>= 768px) -->
@@ -214,6 +541,10 @@
 				{/if}
 			</button>
 		</div>
+
+		{#if !isCollapsed}
+			{@render workspaceSection(false)}
+		{/if}
 
 		<nav aria-label="Primary" class="flex-1 space-y-1.5 overflow-y-auto px-2.5 py-4">
 			{#each navItems as item (item.href)}
@@ -319,6 +650,8 @@
 			</button>
 		</div>
 
+		{@render workspaceSection(true)}
+
 		<nav aria-label="Mobile menu" class="flex-1 space-y-1.5 overflow-y-auto px-3 py-4">
 			{#each navItems as item, index (item.href)}
 				{@const active = router.pathname === item.href}
@@ -385,18 +718,184 @@
 				</span>
 			</div>
 
-			<div class="flex items-center gap-3 shrink-0">
-				{#if authStore.user}
-					<span
-						class="hidden sm:inline-block max-w-[240px] truncate font-mono text-xs font-bold text-ink/75"
+			<!-- Right Side: Bell Icon Button, then Avatar Button -->
+			<div bind:this={headerActionsEl} class="relative flex items-center gap-2.5 shrink-0">
+				<!-- Bell Button -->
+				<button
+					bind:this={bellBtn}
+					type="button"
+					onclick={toggleBell}
+					aria-label={unreadCount > 0
+						? `Notifications (${unreadCount} unread)`
+						: 'Notifications'}
+					aria-expanded={bellOpen}
+					aria-haspopup="dialog"
+					class="relative flex h-9 w-9 items-center justify-center rounded-md border-2 border-ink bg-cream text-ink shadow-brutal-xs cursor-pointer transition-colors hover:bg-yellow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt"
+				>
+					<Bell class="h-4 w-4 stroke-[2.25]" aria-hidden="true" />
+					{#if unreadCount > 0}
+						<span
+							data-unread-badge
+							class=" -top-1.5 -right-1.5 absolute flex h-5 min-w-5 items-center justify-center rounded-sm border-2 border-ink bg-coral px-1 font-mono text-[10px] font-extrabold leading-none text-ink shadow-brutal-xs"
+						>
+							{unreadCount}
+						</span>
+					{/if}
+				</button>
+
+				<!-- Avatar Button -->
+				<button
+					bind:this={avatarBtn}
+					type="button"
+					onclick={toggleAvatar}
+					aria-label="Account menu"
+					aria-expanded={avatarOpen}
+					aria-haspopup="menu"
+					class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border-2 border-ink bg-yellow font-heading text-xs font-extrabold uppercase tracking-tight text-ink shadow-brutal-xs cursor-pointer transition-colors hover:bg-yellow-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt"
+				>
+					{#if resolvedHeaderAvatar && !avatarLoadError}
+						<img
+							src={resolvedHeaderAvatar}
+							alt={authStore.user?.name || 'User avatar'}
+							class="h-full w-full object-cover"
+							onerror={() => (avatarLoadError = true)}
+						/>
+					{:else}
+						<span>{userInitials}</span>
+					{/if}
+				</button>
+
+				<!-- Notifications Panel -->
+				{#if bellOpen}
+					<div
+						role="dialog"
+						aria-label="Notifications"
+						class="absolute right-0 top-full z-50 mt-2 w-[calc(100vw-2rem)] max-w-sm sm:w-96 rounded-md border-2 border-ink bg-surface shadow-brutal-md overflow-hidden"
 					>
-						{authStore.user.email}
-					</span>
+						<div class="flex items-center justify-between gap-2 border-b-2 border-ink bg-cream px-4 py-3">
+							<div class="flex items-center gap-2 min-w-0">
+								<span class="font-heading text-sm font-extrabold text-ink">
+									Notifications
+								</span>
+								{#if unreadCount > 0}
+									<span
+										class="rounded-sm border-2 border-ink bg-yellow px-1.5 py-0.5 font-mono text-[10px] font-extrabold uppercase text-ink"
+									>
+										{unreadCount} Unread
+									</span>
+								{/if}
+							</div>
+
+							<button
+								type="button"
+								onclick={markAllRead}
+								disabled={unreadCount === 0}
+								class="inline-flex items-center gap-1 rounded border-2 border-ink bg-surface px-2 py-1 font-mono text-[11px] font-bold text-ink shadow-brutal-xs cursor-pointer transition-colors hover:bg-yellow disabled:opacity-50 disabled:pointer-events-none"
+							>
+								<CheckCheck class="h-3.5 w-3.5" aria-hidden="true" />
+								<span>Mark all read</span>
+							</button>
+						</div>
+
+						{#if unreadCount === 0}
+							<div
+								role="status"
+								data-notifications-empty
+								class="flex items-center gap-2.5 border-b-2 border-ink bg-yellow/35 px-4 py-2.5 text-ink"
+							>
+								<CheckCheck class="h-4 w-4 shrink-0 text-ink" aria-hidden="true" />
+								<p class="font-heading text-xs font-bold">
+									All caught up — no unread notifications.
+								</p>
+							</div>
+						{/if}
+
+						<ul class="max-h-80 divide-y-2 divide-ink/15 overflow-y-auto">
+							{#each notificationsState as item (item.id)}
+								{@const ItemIcon = notificationIcon(item.kind)}
+								<li
+									class="flex items-start gap-3 px-4 py-3 transition-colors {item.unread
+										? 'bg-cream/65'
+										: 'bg-surface opacity-75'}"
+								>
+									<div
+										class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-2 border-ink shadow-brutal-xs {item.kind ===
+										'warning'
+											? 'bg-coral text-ink'
+											: item.unread
+												? 'bg-yellow text-ink'
+												: 'bg-cream text-ink/80'}"
+									>
+										<ItemIcon class="h-4 w-4" aria-hidden="true" />
+									</div>
+
+									<div class="min-w-0 flex-1">
+										<p
+											class="text-xs leading-snug text-ink {item.unread
+												? 'font-bold'
+												: 'font-medium text-ink/80'}"
+										>
+											{item.text}
+										</p>
+										<span class="mt-1 block font-mono text-[11px] font-bold text-ink/60">
+											{item.time}
+										</span>
+									</div>
+
+									{#if item.unread}
+										<span
+											aria-label="Unread"
+											class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full border border-ink bg-cobalt"
+										></span>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					</div>
 				{/if}
-				<Button variant="secondary" size="sm" disabled={loggingOut} onclick={handleLogout}>
-					<LogOut class="h-3.5 w-3.5" />
-					<span>{loggingOut ? 'Signing out...' : 'Logout'}</span>
-				</Button>
+
+				<!-- Avatar Dropdown -->
+				{#if avatarOpen}
+					<div
+						role="menu"
+						aria-label="Account menu"
+						class="absolute right-0 top-full z-50 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-md border-2 border-ink bg-surface shadow-brutal-md overflow-hidden"
+					>
+						<div class="border-b-2 border-ink bg-cream px-4 py-3">
+							<p class="font-heading text-sm font-extrabold text-ink truncate">
+								{authStore.user?.name || 'User'}
+							</p>
+							<p class="mt-0.5 font-mono text-xs font-bold text-ink/75 truncate">
+								{authStore.user?.email || ''}
+							</p>
+						</div>
+
+						<div class="p-1.5">
+							<button
+								type="button"
+								role="menuitem"
+								onclick={handleNavigateSettings}
+								class="flex w-full items-center gap-2.5 rounded-md border-2 border-transparent px-3 py-2 text-left font-heading text-sm font-bold text-ink cursor-pointer transition-colors hover:border-ink hover:bg-yellow"
+							>
+								<Settings class="h-4 w-4 shrink-0" aria-hidden="true" />
+								<span>Settings</span>
+							</button>
+						</div>
+
+						<div class="border-t-2 border-ink p-1.5">
+							<button
+								type="button"
+								role="menuitem"
+								disabled={loggingOut}
+								onclick={handleLogout}
+								class="flex w-full items-center gap-2.5 rounded-md border-2 border-transparent px-3 py-2 text-left font-heading text-sm font-bold text-ink cursor-pointer transition-colors hover:border-ink hover:bg-coral disabled:opacity-50"
+							>
+								<LogOut class="h-4 w-4 shrink-0" aria-hidden="true" />
+								<span>{loggingOut ? 'Signing out...' : 'Logout'}</span>
+							</button>
+						</div>
+					</div>
+				{/if}
 			</div>
 		</header>
 
@@ -408,16 +907,100 @@
 	</div>
 </div>
 
+{#if createWsOpen}
+	<div
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="create-workspace-dialog-title"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 p-4"
+	>
+		<div class="w-full max-w-md rounded-md border-2 border-ink bg-surface p-6 shadow-brutal-lg space-y-4">
+			<div class="flex items-start justify-between gap-3">
+				<div>
+					<h2 id="create-workspace-dialog-title" class="font-heading text-lg font-extrabold text-ink">
+						Create Workspace
+					</h2>
+					<p class="text-xs text-ink/70">Create an isolated tenant workspace on the Free plan.</p>
+				</div>
+				<button
+					type="button"
+					onclick={closeCreateWorkspaceModal}
+					aria-label="Close create workspace dialog"
+					class="flex h-8 w-8 items-center justify-center rounded border-2 border-ink bg-cream text-ink shadow-brutal-xs cursor-pointer hover:bg-yellow"
+				>
+					<X class="h-4 w-4" />
+				</button>
+			</div>
+
+			<form onsubmit={handleCreateWorkspace} class="space-y-4">
+				<div>
+					<label for="new-workspace-name" class="mb-1 block font-heading text-xs font-bold uppercase text-ink">
+						Workspace Name
+					</label>
+					<input
+						id="new-workspace-name"
+						type="text"
+						required
+						minlength={2}
+						maxlength={120}
+						bind:value={newWsName}
+						placeholder="Acme Corp"
+						class="w-full rounded-md border-2 border-ink bg-cream px-3.5 py-2 text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
+					/>
+				</div>
+
+				<div>
+					<label for="new-workspace-slug" class="mb-1 block font-heading text-xs font-bold uppercase text-ink">
+						Slug (optional)
+					</label>
+					<input
+						id="new-workspace-slug"
+						type="text"
+						maxlength={64}
+						bind:value={newWsSlug}
+						placeholder="acme-corp"
+						class="w-full rounded-md border-2 border-ink bg-cream px-3.5 py-2 font-mono text-sm text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-cobalt"
+					/>
+				</div>
+
+				{#if createWsError}
+					<p role="alert" class="text-xs font-semibold text-red-600">{createWsError}</p>
+				{/if}
+
+				<div class="flex justify-end gap-3">
+					<button
+						type="button"
+						onclick={closeCreateWorkspaceModal}
+						disabled={creatingWs}
+						class="h-10 rounded-md border-2 border-ink bg-surface px-4 font-heading text-sm font-bold text-ink shadow-brutal-xs cursor-pointer hover:bg-cream disabled:opacity-50"
+					>
+						Cancel
+					</button>
+					<button
+						type="submit"
+						disabled={creatingWs}
+						class="h-10 rounded-md border-2 border-ink bg-yellow px-4 font-heading text-sm font-bold text-ink shadow-brutal-xs cursor-pointer hover:bg-yellow-hover disabled:opacity-50"
+					>
+						{creatingWs ? 'Creating...' : 'Create Workspace'}
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+{/if}
+
 <style>
 	:global(body:has([data-app-shell])) {
 		overflow: hidden;
 		height: 100dvh;
 	}
 
-	:global([data-app-shell] main div.border-2.border-ink.rounded-md),
-	:global([data-app-shell] main table) {
-		min-width: 0;
-		max-width: 100%;
-		overflow-x: auto;
+	@layer base {
+		:global([data-app-shell] main div.border-2.border-ink.rounded-md:not([role='dialog'], [role='dialog'] *)),
+		:global([data-app-shell] main table) {
+			min-width: 0;
+			max-width: 100%;
+			overflow-x: auto;
+		}
 	}
 </style>

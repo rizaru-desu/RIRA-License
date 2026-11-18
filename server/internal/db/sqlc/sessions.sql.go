@@ -28,7 +28,7 @@ INSERT INTO sessions (
     $4,
     $5
 )
-RETURNING id, user_id, token_hash, user_agent, ip_address, expires_at, last_activity_at, created_at
+RETURNING id, user_id, active_workspace_id, token_hash, user_agent, ip_address, expires_at, last_activity_at, created_at
 `
 
 type CreateSessionParams struct {
@@ -51,6 +51,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.ActiveWorkspaceID,
 		&i.TokenHash,
 		&i.UserAgent,
 		&i.IpAddress,
@@ -95,6 +96,7 @@ const getSessionWithUserByTokenHash = `-- name: GetSessionWithUserByTokenHash :o
 SELECT
     s.id AS session_id,
     s.user_id AS session_user_id,
+    s.active_workspace_id AS session_active_workspace_id,
     s.token_hash AS session_token_hash,
     s.user_agent AS session_user_agent,
     s.ip_address AS session_ip_address,
@@ -107,7 +109,11 @@ SELECT
     u.name,
     u.avatar_url,
     u.email_verified_at,
+    u.role,
+    u.is_superadmin,
     u.status,
+    u.suspended_reason,
+    u.suspended_at,
     u.deleted_at,
     u.two_factor_enabled,
     u.two_factor_method,
@@ -125,31 +131,36 @@ LIMIT 1
 `
 
 type GetSessionWithUserByTokenHashRow struct {
-	SessionID             uuid.UUID   `json:"session_id"`
-	SessionUserID         uuid.UUID   `json:"session_user_id"`
-	SessionTokenHash      string      `json:"session_token_hash"`
-	SessionUserAgent      pgtype.Text `json:"session_user_agent"`
-	SessionIpAddress      *netip.Addr `json:"session_ip_address"`
-	SessionExpiresAt      time.Time   `json:"session_expires_at"`
-	SessionLastActivityAt time.Time   `json:"session_last_activity_at"`
-	SessionCreatedAt      time.Time   `json:"session_created_at"`
-	ID                    uuid.UUID   `json:"id"`
-	Email                 string      `json:"email"`
-	PasswordHash          pgtype.Text `json:"password_hash"`
-	Name                  string      `json:"name"`
-	AvatarUrl             pgtype.Text `json:"avatar_url"`
-	EmailVerifiedAt       *time.Time  `json:"email_verified_at"`
-	Status                string      `json:"status"`
-	DeletedAt             *time.Time  `json:"deleted_at"`
-	TwoFactorEnabled      bool        `json:"two_factor_enabled"`
-	TwoFactorMethod       pgtype.Text `json:"two_factor_method"`
-	TotpSecretEncrypted   []byte      `json:"totp_secret_encrypted"`
-	TotpVerifiedAt        *time.Time  `json:"totp_verified_at"`
-	FailedLoginAttempts   int32       `json:"failed_login_attempts"`
-	LockedUntil           *time.Time  `json:"locked_until"`
-	LastLoginAt           *time.Time  `json:"last_login_at"`
-	CreatedAt             time.Time   `json:"created_at"`
-	UpdatedAt             time.Time   `json:"updated_at"`
+	SessionID                uuid.UUID     `json:"session_id"`
+	SessionUserID            uuid.UUID     `json:"session_user_id"`
+	SessionActiveWorkspaceID uuid.NullUUID `json:"session_active_workspace_id"`
+	SessionTokenHash         string        `json:"session_token_hash"`
+	SessionUserAgent         pgtype.Text   `json:"session_user_agent"`
+	SessionIpAddress         *netip.Addr   `json:"session_ip_address"`
+	SessionExpiresAt         time.Time     `json:"session_expires_at"`
+	SessionLastActivityAt    time.Time     `json:"session_last_activity_at"`
+	SessionCreatedAt         time.Time     `json:"session_created_at"`
+	ID                       uuid.UUID     `json:"id"`
+	Email                    string        `json:"email"`
+	PasswordHash             pgtype.Text   `json:"password_hash"`
+	Name                     string        `json:"name"`
+	AvatarUrl                pgtype.Text   `json:"avatar_url"`
+	EmailVerifiedAt          *time.Time    `json:"email_verified_at"`
+	Role                     string        `json:"role"`
+	IsSuperadmin             bool          `json:"is_superadmin"`
+	Status                   string        `json:"status"`
+	SuspendedReason          pgtype.Text   `json:"suspended_reason"`
+	SuspendedAt              *time.Time    `json:"suspended_at"`
+	DeletedAt                *time.Time    `json:"deleted_at"`
+	TwoFactorEnabled         bool          `json:"two_factor_enabled"`
+	TwoFactorMethod          pgtype.Text   `json:"two_factor_method"`
+	TotpSecretEncrypted      []byte        `json:"totp_secret_encrypted"`
+	TotpVerifiedAt           *time.Time    `json:"totp_verified_at"`
+	FailedLoginAttempts      int32         `json:"failed_login_attempts"`
+	LockedUntil              *time.Time    `json:"locked_until"`
+	LastLoginAt              *time.Time    `json:"last_login_at"`
+	CreatedAt                time.Time     `json:"created_at"`
+	UpdatedAt                time.Time     `json:"updated_at"`
 }
 
 func (q *Queries) GetSessionWithUserByTokenHash(ctx context.Context, tokenHash string) (GetSessionWithUserByTokenHashRow, error) {
@@ -158,6 +169,7 @@ func (q *Queries) GetSessionWithUserByTokenHash(ctx context.Context, tokenHash s
 	err := row.Scan(
 		&i.SessionID,
 		&i.SessionUserID,
+		&i.SessionActiveWorkspaceID,
 		&i.SessionTokenHash,
 		&i.SessionUserAgent,
 		&i.SessionIpAddress,
@@ -170,7 +182,11 @@ func (q *Queries) GetSessionWithUserByTokenHash(ctx context.Context, tokenHash s
 		&i.Name,
 		&i.AvatarUrl,
 		&i.EmailVerifiedAt,
+		&i.Role,
+		&i.IsSuperadmin,
 		&i.Status,
+		&i.SuspendedReason,
+		&i.SuspendedAt,
 		&i.DeletedAt,
 		&i.TwoFactorEnabled,
 		&i.TwoFactorMethod,
@@ -183,6 +199,22 @@ func (q *Queries) GetSessionWithUserByTokenHash(ctx context.Context, tokenHash s
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const setSessionActiveWorkspace = `-- name: SetSessionActiveWorkspace :exec
+UPDATE sessions
+SET active_workspace_id = $2
+WHERE id = $1
+`
+
+type SetSessionActiveWorkspaceParams struct {
+	ID                uuid.UUID     `json:"id"`
+	ActiveWorkspaceID uuid.NullUUID `json:"active_workspace_id"`
+}
+
+func (q *Queries) SetSessionActiveWorkspace(ctx context.Context, arg SetSessionActiveWorkspaceParams) error {
+	_, err := q.db.Exec(ctx, setSessionActiveWorkspace, arg.ID, arg.ActiveWorkspaceID)
+	return err
 }
 
 const touchSessionActivity = `-- name: TouchSessionActivity :exec

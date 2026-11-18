@@ -99,3 +99,89 @@ func (q *Queries) InsertAuthAuditLog(ctx context.Context, arg InsertAuthAuditLog
 	)
 	return err
 }
+
+const insertWorkspaceAuditLog = `-- name: InsertWorkspaceAuditLog :exec
+INSERT INTO auth_audit_log (
+    user_id,
+    workspace_id,
+    actor_user_id,
+    event,
+    ip_address,
+    user_agent,
+    metadata
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7
+)
+`
+
+type InsertWorkspaceAuditLogParams struct {
+	UserID      uuid.NullUUID `json:"user_id"`
+	WorkspaceID uuid.NullUUID `json:"workspace_id"`
+	ActorUserID uuid.NullUUID `json:"actor_user_id"`
+	Event       string        `json:"event"`
+	IpAddress   *netip.Addr   `json:"ip_address"`
+	UserAgent   pgtype.Text   `json:"user_agent"`
+	Metadata    []byte        `json:"metadata"`
+}
+
+func (q *Queries) InsertWorkspaceAuditLog(ctx context.Context, arg InsertWorkspaceAuditLogParams) error {
+	_, err := q.db.Exec(ctx, insertWorkspaceAuditLog,
+		arg.UserID,
+		arg.WorkspaceID,
+		arg.ActorUserID,
+		arg.Event,
+		arg.IpAddress,
+		arg.UserAgent,
+		arg.Metadata,
+	)
+	return err
+}
+
+const listWorkspaceAuditLogs = `-- name: ListWorkspaceAuditLogs :many
+SELECT id, user_id, workspace_id, actor_user_id, event, ip_address, user_agent, metadata, created_at
+FROM auth_audit_log
+WHERE workspace_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $2
+`
+
+type ListWorkspaceAuditLogsParams struct {
+	WorkspaceID uuid.NullUUID `json:"workspace_id"`
+	Limit       int32         `json:"limit"`
+}
+
+func (q *Queries) ListWorkspaceAuditLogs(ctx context.Context, arg ListWorkspaceAuditLogsParams) ([]AuthAuditLog, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceAuditLogs, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuthAuditLog{}
+	for rows.Next() {
+		var i AuthAuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.WorkspaceID,
+			&i.ActorUserID,
+			&i.Event,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

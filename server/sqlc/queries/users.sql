@@ -4,14 +4,62 @@ INSERT INTO users (
     password_hash,
     name,
     avatar_url,
-    email_verified_at
+    email_verified_at,
+    role,
+    is_superadmin
 ) VALUES (
     lower($1),
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6,
+    $7
 )
+RETURNING *;
+
+-- name: CountAllUsers :one
+SELECT COUNT(*)
+FROM users;
+
+-- name: CountActiveOwners :one
+SELECT COUNT(*)
+FROM users
+WHERE role = 'owner'
+  AND status = 'active'
+  AND deleted_at IS NULL;
+
+-- name: ListUsers :many
+SELECT *
+FROM users
+WHERE deleted_at IS NULL
+ORDER BY created_at ASC, id ASC;
+
+-- name: UpdateUserRole :one
+UPDATE users
+SET role = $2
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: SuspendUser :one
+UPDATE users
+SET status = 'suspended',
+    suspended_reason = $2,
+    suspended_at = now()
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ActivateUser :one
+UPDATE users
+SET status = 'active',
+    suspended_reason = NULL,
+    suspended_at = NULL,
+    failed_login_attempts = 0,
+    locked_until = NULL
+WHERE id = $1
+  AND deleted_at IS NULL
 RETURNING *;
 
 -- name: GetUserByID :one
@@ -20,6 +68,14 @@ FROM users
 WHERE id = $1
   AND deleted_at IS NULL
 LIMIT 1;
+
+-- name: GetUserByIDForUpdate :one
+SELECT *
+FROM users
+WHERE id = $1
+  AND deleted_at IS NULL
+LIMIT 1
+FOR UPDATE;
 
 -- name: GetUserByEmail :one
 SELECT *
@@ -103,6 +159,20 @@ SET avatar_url = COALESCE(avatar_url, $2)
 WHERE id = $1
   AND deleted_at IS NULL;
 
+-- name: UpdateUserName :one
+UPDATE users
+SET name = $2
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: UpdateUserAvatar :one
+UPDATE users
+SET avatar_url = $2
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
 -- name: GetOAuthAccount :one
 SELECT *
 FROM oauth_accounts
@@ -151,6 +221,8 @@ RETURNING *;
 UPDATE users
 SET deleted_at = NULL,
     status = 'active',
+    suspended_reason = NULL,
+    suspended_at = NULL,
     failed_login_attempts = 0,
     locked_until = NULL
 WHERE id = $1

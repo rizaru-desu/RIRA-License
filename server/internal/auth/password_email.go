@@ -82,10 +82,17 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 		return ErrPasswordTooShort
 	}
 
+	tokHash := crypto.HashToken(rawToken)
 	tok, err := s.store.Queries().GetVerificationTokenByHash(ctx, sqlc.GetVerificationTokenByHashParams{
-		TokenHash: crypto.HashToken(rawToken),
+		TokenHash: tokHash,
 		Type:      TokenTypePasswordReset,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		tok, err = s.store.Queries().GetVerificationTokenByHash(ctx, sqlc.GetVerificationTokenByHashParams{
+			TokenHash: tokHash,
+			Type:      TokenTypeEmailVerify,
+		})
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidToken
@@ -163,6 +170,9 @@ func (s *Service) updatePasswordAndRevoke(
 				if errors.Is(txErr, pgx.ErrNoRows) {
 					return ErrInvalidToken
 				}
+				return txErr
+			}
+			if txErr := q.UpdateUserEmailVerified(ctx, userID); txErr != nil {
 				return txErr
 			}
 		}

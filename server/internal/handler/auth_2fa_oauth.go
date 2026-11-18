@@ -14,6 +14,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -355,6 +356,10 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.svc.HandleOAuthCallback(ctx, provider, code, requestMeta(r))
 	if err != nil {
+		if errors.Is(err, auth.ErrRegistrationClosed) {
+			writeError(w, http.StatusForbidden, auth.ErrRegistrationClosed.Error())
+			return
+		}
 		h.logger.Warn("oauth callback failed", "provider", provider, "err", err)
 		http.Redirect(w, r, h.cfg.AppURL+"/login?error=oauth_failed", http.StatusFound)
 		return

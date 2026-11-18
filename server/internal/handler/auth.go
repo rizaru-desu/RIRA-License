@@ -38,7 +38,11 @@ const (
 
 type ctxKey string
 
-const userContextKey ctxKey = "auth_user"
+const (
+	userContextKey      ctxKey = "auth_user"
+	sessionIDContextKey ctxKey = "auth_session_id"
+	workspaceContextKey ctxKey = "auth_workspace"
+)
 
 // UserFromContext retrieves the authenticated user stored by AuthMiddleware.
 func UserFromContext(ctx context.Context) (*auth.UserDTO, bool) {
@@ -49,6 +53,28 @@ func UserFromContext(ctx context.Context) (*auth.UserDTO, bool) {
 // ContextWithUser stores an authenticated user on ctx.
 func ContextWithUser(ctx context.Context, user *auth.UserDTO) context.Context {
 	return context.WithValue(ctx, userContextKey, user)
+}
+
+// SessionIDFromContext retrieves the active session ID stored by AuthMiddleware.
+func SessionIDFromContext(ctx context.Context) uuid.UUID {
+	id, _ := ctx.Value(sessionIDContextKey).(uuid.UUID)
+	return id
+}
+
+// ContextWithSessionID stores the active session ID on ctx.
+func ContextWithSessionID(ctx context.Context, sessionID uuid.UUID) context.Context {
+	return context.WithValue(ctx, sessionIDContextKey, sessionID)
+}
+
+// WorkspaceFromContext retrieves the resolved active workspace stored by RequireWorkspace middleware.
+func WorkspaceFromContext(ctx context.Context) (*auth.WorkspaceContext, bool) {
+	ws, ok := ctx.Value(workspaceContextKey).(*auth.WorkspaceContext)
+	return ws, ok && ws != nil
+}
+
+// ContextWithWorkspace stores a resolved active workspace on ctx.
+func ContextWithWorkspace(ctx context.Context, ws *auth.WorkspaceContext) context.Context {
+	return context.WithValue(ctx, workspaceContextKey, ws)
 }
 
 // AuthHandler serves authentication, session, 2FA, and OAuth HTTP endpoints.
@@ -118,6 +144,17 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.HTTPTimeout)
+	defer cancel()
+
+	if open, err := h.svc.IsRegistrationOpen(ctx); err != nil {
+		h.handleServiceError(w, err)
+		return
+	} else if !open {
+		writeError(w, http.StatusForbidden, auth.ErrRegistrationClosed.Error())
+		return
+	}
+
 	var req registerRequest
 	if fields, err := decodeAndValidate(r, h.validate, &req); err != nil {
 		if fields != nil {
@@ -127,9 +164,6 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request payload")
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.HTTPTimeout)
-	defer cancel()
 
 	user, err := h.svc.Register(ctx, req.Email, req.Password, req.Name, requestMeta(r))
 	if err != nil {
@@ -306,7 +340,56 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+
+	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.HTTPTimeout)
+	defer cancel()
+
+	var requestedWS *uuid.UUID
+	if rawWS := strings.TrimSpace(r.Header.Get("X-Workspace-ID")); rawWS != "" {
+		parsed, err := uuid.Parse(rawWS)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid workspace id")
+			return
+		}
+		requestedWS = &parsed
+	}
+
+	effectiveUser := *user
+	plan := h.svc.Plan()
+	maxUsers := h.svc.MaxUsers()
+	var activeWorkspace *auth.WorkspaceDTO
+
+	inPlatformMode := effectiveUser.IsSuperadmin && requestedWS == nil && effectiveUser.ActiveWorkspaceID == nil
+	if inPlatformMode {
+		effectiveUser.Permissions = auth.PermissionsFor(effectiveUser.Role, true)
+		plan = "platform"
+		maxUsers = 0
+	} else if wsCtx, err := h.svc.ResolveWorkspaceContext(ctx, &effectiveUser, requestedWS); err == nil && wsCtx != nil {
+		effectiveUser.Role = wsCtx.Role
+		effectiveUser.Permissions = wsCtx.Permissions
+		wsID := wsCtx.Workspace.ID
+		effectiveUser.ActiveWorkspaceID = &wsID
+		plan = wsCtx.Workspace.Plan
+		maxUsers = wsCtx.Limits.MaxUsers
+		dto := auth.WorkspaceToDTO(wsCtx.Workspace, wsCtx.Role, 0, time.Now())
+		activeWorkspace = &dto
+	} else if errors.Is(err, auth.ErrWorkspaceSuspended) {
+		writeError(w, http.StatusForbidden, auth.ErrWorkspaceSuspended.Error())
+		return
+	}
+
+	workspaces, _ := h.svc.ListUserWorkspaces(ctx, user.ID, user.IsSuperadmin)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user":          &effectiveUser,
+		"role":          effectiveUser.Role,
+		"is_superadmin": effectiveUser.IsSuperadmin,
+		"permissions":   effectiveUser.Permissions,
+		"plan":          plan,
+		"max_users":     maxUsers,
+		"workspace":     activeWorkspace,
+		"workspaces":    workspaces,
+	})
 }
 
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
@@ -456,6 +539,21 @@ func (h *AuthHandler) ConfirmEmailChange(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *AuthHandler) handleServiceError(w http.ResponseWriter, err error) {
+	var govErr *auth.MembershipGovernanceError
+	if errors.As(err, &govErr) {
+		payload := map[string]any{
+			"code":  govErr.Code,
+			"error": govErr.Message,
+		}
+		if govErr.WorkspaceID != uuid.Nil {
+			payload["workspace_id"] = govErr.WorkspaceID
+		}
+		if govErr.WorkspaceName != "" {
+			payload["workspace_name"] = govErr.WorkspaceName
+		}
+		writeJSON(w, http.StatusConflict, payload)
+		return
+	}
 	switch {
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
@@ -483,6 +581,52 @@ func (h *AuthHandler) handleServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "a verified primary email is required from the oauth provider")
 	case errors.Is(err, auth.ErrOAuthExchange):
 		writeError(w, http.StatusBadGateway, "oauth authentication failed")
+	case errors.Is(err, auth.ErrInvalidDisplayName):
+		writeError(w, http.StatusBadRequest, auth.ErrInvalidDisplayName.Error())
+	case errors.Is(err, auth.ErrAvatarTooLarge):
+		writeError(w, http.StatusBadRequest, auth.ErrAvatarTooLarge.Error())
+	case errors.Is(err, auth.ErrInvalidAvatarType):
+		writeError(w, http.StatusBadRequest, auth.ErrInvalidAvatarType.Error())
+	case errors.Is(err, auth.ErrRegistrationClosed):
+		writeError(w, http.StatusForbidden, auth.ErrRegistrationClosed.Error())
+	case errors.Is(err, auth.ErrInviteRequiresPaidPlan):
+		writeError(w, http.StatusForbidden, auth.ErrInviteRequiresPaidPlan.Error())
+	case errors.Is(err, auth.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, auth.ErrFreePlanLimitReached):
+		writeError(w, http.StatusForbidden, auth.ErrFreePlanLimitReached.Error())
+	case errors.Is(err, auth.ErrSoleOwnerCannotDelete):
+		writeError(w, http.StatusForbidden, auth.ErrSoleOwnerCannotDelete.Error())
+	case errors.Is(err, auth.ErrSoleOwnerCannotLeave):
+		writeError(w, http.StatusForbidden, auth.ErrSoleOwnerCannotLeave.Error())
+	case errors.Is(err, auth.ErrInviteNotFound):
+		writeError(w, http.StatusNotFound, auth.ErrInviteNotFound.Error())
+	case errors.Is(err, auth.ErrInvalidRole):
+		writeError(w, http.StatusBadRequest, auth.ErrInvalidRole.Error())
+	case errors.Is(err, auth.ErrInvalidSuspendReason):
+		writeError(w, http.StatusBadRequest, auth.ErrInvalidSuspendReason.Error())
+	case errors.Is(err, auth.ErrUserNotFound):
+		writeError(w, http.StatusNotFound, auth.ErrUserNotFound.Error())
+	case errors.Is(err, auth.ErrWorkspaceNotFound):
+		writeError(w, http.StatusNotFound, auth.ErrWorkspaceNotFound.Error())
+	case errors.Is(err, auth.ErrWorkspaceSuspended):
+		writeError(w, http.StatusForbidden, auth.ErrWorkspaceSuspended.Error())
+	case errors.Is(err, auth.ErrConflictWorkspaceSlug):
+		writeError(w, http.StatusConflict, auth.ErrConflictWorkspaceSlug.Error())
+	case errors.Is(err, auth.ErrConflictMember):
+		writeError(w, http.StatusConflict, auth.ErrConflictMember.Error())
+	case errors.Is(err, auth.ErrInvalidWorkspaceName):
+		writeError(w, http.StatusBadRequest, auth.ErrInvalidWorkspaceName.Error())
+	case errors.Is(err, auth.ErrInvalidWorkspaceSlug):
+		writeError(w, http.StatusBadRequest, auth.ErrInvalidWorkspaceSlug.Error())
+	case errors.Is(err, auth.ErrInvalidPlan):
+		writeError(w, http.StatusBadRequest, auth.ErrInvalidPlan.Error())
+	case errors.Is(err, auth.ErrLastActiveAdmin):
+		writeErrorCode(w, http.StatusConflict, auth.GovCodeLastActiveAdmin, auth.ErrLastActiveAdmin.Error())
+	case errors.Is(err, auth.ErrLastActiveMember):
+		writeErrorCode(w, http.StatusConflict, auth.GovCodeLastActiveMember, auth.ErrLastActiveMember.Error())
+	case errors.Is(err, auth.ErrGlobalSuspendBlocked):
+		writeErrorCode(w, http.StatusConflict, auth.GovCodeGlobalSuspendBlocked, auth.ErrGlobalSuspendBlocked.Error())
 	default:
 		h.logger.Error("auth service error", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")

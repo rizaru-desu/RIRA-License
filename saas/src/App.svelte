@@ -11,9 +11,19 @@
 	import ConfirmAccountDeletePage from './routes/ConfirmAccountDeletePage.svelte';
 	import RestoreAccountPage from './routes/RestoreAccountPage.svelte';
 	import DashboardPage from './routes/DashboardPage.svelte';
+	import ProfileSettingsPage from './routes/ProfileSettingsPage.svelte';
 	import SecuritySettingsPage from './routes/SecuritySettingsPage.svelte';
+	import WorkspaceUsersPage from './routes/WorkspaceUsersPage.svelte';
+	import PlatformPage from './routes/PlatformPage.svelte';
 
-	const protectedRoutes = new Set(['/dashboard', '/settings/security']);
+	const protectedRoutes = new Set([
+		'/dashboard',
+		'/platform',
+		'/workspace/users',
+		'/settings',
+		'/settings/profile',
+		'/settings/security'
+	]);
 	const guestOnlyRoutes = new Set(['/login', '/register', '/forgot-password']);
 
 	$effect(() => {
@@ -35,8 +45,33 @@
 			router.navigate(authStore.user ? '/dashboard' : '/login', true);
 			return;
 		}
+		if (path === '/settings') {
+			router.navigate(authStore.user ? '/settings/profile' : '/login', true);
+			return;
+		}
+		if (path === '/settings/users') {
+			router.navigate(
+				!authStore.user
+					? '/login'
+					: authStore.canViewUsers
+						? '/workspace/users'
+						: authStore.user.is_superadmin
+							? '/platform'
+							: '/dashboard',
+				true
+			);
+			return;
+		}
 		if (protectedRoutes.has(path) && !authStore.user) {
 			router.navigate('/login', true);
+			return;
+		}
+		if (path === '/workspace/users' && authStore.user && !authStore.canViewUsers) {
+			router.navigate(authStore.user.is_superadmin ? '/platform' : '/dashboard', true);
+			return;
+		}
+		if (path === '/platform' && authStore.user && !authStore.user.is_superadmin) {
+			router.navigate('/dashboard', true);
 			return;
 		}
 		if (guestOnlyRoutes.has(path) && authStore.user) {
@@ -67,8 +102,14 @@
 	<RestoreAccountPage />
 {:else if router.pathname === '/dashboard'}
 	<DashboardPage />
+{:else if router.pathname === '/settings/profile'}
+	<ProfileSettingsPage />
 {:else if router.pathname === '/settings/security'}
 	<SecuritySettingsPage />
+{:else if router.pathname === '/workspace/users'}
+	<WorkspaceUsersPage />
+{:else if router.pathname === '/platform'}
+	<PlatformPage />
 {:else}
 	<LoginPage />
 {/if}
